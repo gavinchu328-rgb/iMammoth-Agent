@@ -1,0 +1,1225 @@
+# 猛犸智能体 · 技能广场定义
+# example 填入对话框，用自然语言描述需求，由 OpenClaw 调度对应技能
+# 提示词均含明确目标，便于安装技能后直接测试
+
+skills:
+  # ── AI4Drug / 原有技能 ─────────────────────────────────────
+  - id: ai4drug_target_discovery
+    name: "靶点发现"
+    category: "AI4Drug"
+    icon: "🎯"
+    description: "根据疾病找出相关的药物靶点"
+    example: "帮我找一下肺癌的药物靶点"
+
+  - id: ai4drug_protein_acquisition
+    name: "蛋白质获取"
+    category: "AI4Drug"
+    icon: "🧬"
+    description: "获取并整理蛋白质三维结构"
+    example: "帮我获取一下 EGFR 蛋白的三维结构信息"
+
+  - id: ai4drug_pocket_prediction
+    name: "口袋预测"
+    category: "AI4Drug"
+    icon: "📍"
+    description: "预测蛋白上可能的药物结合口袋"
+    example: "帮我预测 EGFR（PDB: 3W2S）上有哪些可能的结合口袋"
+
+  - id: ai4drug_molecule_design
+    name: "分子设计"
+    category: "AI4Drug"
+    icon: "💊"
+    description: "针对结合口袋设计候选小分子"
+    example: "针对 EGFR 的结合口袋，帮我设计一批候选小分子"
+
+  - id: ai4drug_conformer_generation
+    name: "3D构象生成"
+    category: "AI4Drug"
+    icon: "🌀"
+    description: "为分子生成三维构象"
+    example: "帮我给阿司匹林（SMILES: CC(=O)Oc1ccccc1C(=O)O）生成三维构象"
+
+  - id: ai4drug_receptor_preparation
+    name: "受体准备"
+    category: "AI4Drug"
+    icon: "🧪"
+    description: "把蛋白结构整理成适合对接的形式"
+    example: "帮我把 EGFR 蛋白结构（PDB: 3W2S）准备成可以做分子对接的受体"
+
+  - id: ai4drug_ligand_preparation
+    name: "配体准备"
+    category: "AI4Drug"
+    icon: "⚗️"
+    description: "把小分子整理成适合对接的形式"
+    example: "帮我把吉非替尼准备成可以做对接的配体"
+
+  - id: ai4drug_docking_box_config
+    name: "对接盒配置"
+    category: "AI4Drug"
+    icon: "📦"
+    description: "按口袋设置对接搜索范围"
+    example: "根据 EGFR 的 ATP 结合口袋，帮我设置分子对接的搜索盒子"
+
+  - id: ai4drug_molecular_docking
+    name: "分子对接"
+    category: "AI4Drug"
+    icon: "🔗"
+    description: "把小分子对接到蛋白口袋并打分"
+    example: "帮我把吉非替尼对接到 EGFR（PDB: 3W2S）上，并给出对接打分"
+
+  - id: ai4drug_molecule_evaluation
+    name: "ADMET评估"
+    category: "AI4Drug"
+    icon: "📊"
+    description: "评估分子的吸收、代谢、毒性等性质"
+    example: "帮我评估吉非替尼、奥希替尼、阿法替尼这 3 个分子的 ADMET 性质"
+
+  - id: ai4drug_retrosynthesis
+    name: "逆合成分析"
+    category: "AI4Drug"
+    icon: "🧭"
+    description: "分析候选分子可能的合成路线"
+    example: "帮我分析一下吉非替尼大概可以怎么合成"
+
+  - id: ai4drug_full_pipeline
+    name: "端到端药物发现"
+    category: "AI4Drug"
+    icon: "🚀"
+    description: "从找靶点到合成分析跑完整流程"
+    example: "帮我对非小细胞肺癌做一轮完整的药物发现，从找靶点一路做到候选分子评估和合成分析"
+
+  - id: exp_design
+    name: "智能实验设计"
+    category: "实验设计"
+    icon: "🧪"
+    description: "基于文献和数据，生成完整实验方案"
+    example: "帮我设计一个酶定向进化的完整实验方案"
+
+  - id: protein_purify
+    name: "蛋白质纯化实验"
+    category: "实验设计"
+    icon: "🧬"
+    description: "设计完整的蛋白质纯化实验方案"
+    example: "帮我设计一个 His-tag 蛋白的镍柱亲和纯化流程"
+
+  - id: cell_culture
+    name: "细胞培养流程"
+    category: "实验设计"
+    icon: "🧫"
+    description: "设计细胞培养全流程"
+    example: "帮我设计一个 HEK293 细胞的传代培养流程"
+
+  - id: lit_to_exp
+    name: "基于文献设计实验"
+    category: "实验设计"
+    icon: "🔗"
+    description: "从文献出发设计实验方案"
+    example: "基于最新 CRISPR 基因编辑文献，帮我设计验证实验"
+
+  - id: lit_search
+    name: "文献智能检索"
+    category: "文献检索"
+    icon: "🔍"
+    description: "多源学术数据库检索与总结"
+    example: "检索近五年关于 PD-1 免疫检查点抑制剂的综述文献"
+
+  - id: enzyme_papers
+    name: "酶工程论文检索"
+    category: "文献检索"
+    icon: "📚"
+    description: "检索酶工程领域最新论文"
+    example: "检索酶工程领域近两年的高引用论文并总结研究热点"
+
+  - id: evolution_papers
+    name: "定向进化文献"
+    category: "文献检索"
+    icon: "📖"
+    description: "检索定向进化相关文献"
+    example: "检索定向进化在工业酶改造中的应用文献"
+
+  - id: true_science
+    name: "真科学问题"
+    category: "药物研发"
+    icon: "🔬"
+    description: "解答复杂科研问题"
+    example: "T 细胞耗竭的分子机制是什么？有哪些逆转策略？"
+
+  - id: catalyst_opt
+    name: "催化剂合成优化"
+    category: "工艺优化"
+    icon: "⚡"
+    description: "优化催化剂合成条件与产率"
+    example: "优化钯催化 Suzuki 偶联反应的条件以提高产率"
+
+  - id: data_analysis
+    name: "实验结果分析"
+    category: "数据分析"
+    icon: "📊"
+    description: "分析实验数据并给出结论"
+    example: "帮我分析这组酶活性测定数据，判断最优反应条件"
+
+  - id: supervisor
+    name: "多智能体协作"
+    category: "调度协作"
+    icon: "🤖"
+    description: "多 Agent 协同完成复杂任务"
+    example: "协调文献检索和实验设计，完成一个完整的科研项目规划"
+
+  - id: auto_lab
+    name: "自动化实验执行"
+    category: "调度协作"
+    icon: "🏭"
+    description: "自动化控制实验设备"
+    example: "设计一个自动化移液流程，完成 96 孔板的样品制备"
+
+  - id: safety_check
+    name: "实验安全校验"
+    category: "安全"
+    icon: "🛡️"
+    description: "评估实验安全风险"
+    example: "评估使用浓硫酸和硝酸进行消解实验的安全风险和防护措施"
+
+  # ── Scientific Agent Skills (K-Dense) ───────────────────────
+  # 共 149 个；介绍与示例已中文化，且含明确可测目标
+  - id: adaptyv
+    name: "Adaptyv 蛋白质实验"
+    category: "蛋白质工程"
+    icon: "🧩"
+    description: "云平台，自动提交蛋白质序列进行实验测试与功能验证"
+    example: "帮我用 Adaptyv 提交 GFP 蛋白（UniProt: P42212）的热稳定性测试实验"
+
+  - id: aeon
+    name: "Aeon 时序机器学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "兼容 scikit-learn 的时序机器学习 Python 工具包"
+    example: "帮我用 aeon 对 UCR GunPoint 时序数据集做分类，并报告准确率"
+
+  - id: anndata
+    name: "AnnData 单细胞数据"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "处理标注矩阵的 Python 包，专为单细胞数据设计"
+    example: "帮我用 AnnData 加载 pbmc3k 单细胞数据，统计细胞数、基因数和线粒体比例"
+
+  - id: arbor
+    name: "Arbor 假设树优化"
+    category: "研究方法"
+    icon: "🎓"
+    description: "基于假设树精炼的自主优化方法，迭代改进分子设计"
+    example: "帮我用 Arbor 优化阿司匹林类似物，目标是提高 LogP 同时保持分子量 < 300"
+
+  - id: arboreto
+    name: "Arboreto 基因调控网络"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基于梯度提升的可扩展基因调控网络推断 Python 工具"
+    example: "帮我用 Arboreto（GRNBoost2）从 pbmc3k 表达矩阵推断前 50 个转录因子调控关系"
+
+  - id: astropy
+    name: "Astropy 天文计算"
+    category: "材料与物理"
+    icon: "⚛️"
+    description: "天文学与天体物理学综合 Python 库，提供核心分析功能"
+    example: "帮我用 Astropy 计算 M31（赤经 0h42m44s，赤纬 +41°16′9″）到地球的距离模数"
+
+  - id: autoskill
+    name: "Autoskill 工作流挖掘"
+    category: "基础设施"
+    icon: "🔧"
+    description: "监控屏幕检测重复科研流程，自动生成可复用工作流技能"
+    example: "帮我把「每天从 CSV 生成柱状图并导出 PNG」这个重复流程整理成可复用技能草稿"
+
+  - id: benchling-integration
+    name: "Benchling 实验平台"
+    category: "平台集成"
+    icon: "🔌"
+    description: "接入 Benchling R&D 平台的工具，程序化操作实验数据"
+    example: "帮我从 Benchling 列出项目中名为 EGFR_cloning 的 DNA 序列实体及其最新版本"
+
+  - id: bgpt-paper-search
+    name: "BGPT 论文检索"
+    category: "科研写作"
+    icon: "📚"
+    description: "搜索学术论文，从全文提取结构化的实验数据与方法细节"
+    example: "帮我用 BGPT 检索「osimertinib resistance EGFR」相关论文，并提取方法学与样本量字段"
+
+  - id: bids
+    name: "BIDS 脑影像标准"
+    category: "神经科学"
+    icon: "🧠"
+    description: "脑影像数据标准（BIDS），规范神经科学数据的组织与描述"
+    example: "帮我检查一个含 T1w 与 task-rest_bold 的 fMRI 目录是否符合 BIDS，并列出缺漏文件"
+
+  - id: biopython
+    name: "BioPython 生物信息"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "计算生物学与生物信息学 Python 库，覆盖序列到结构分析"
+    example: "帮我用 BioPython 从 NCBI 下载 EGFR 基因（Gene ID: 1956）的 CDS FASTA 并统计 GC 含量"
+
+  - id: bioservices
+    name: "BioServices 生物数据库"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "统一编程访问 40+ 生物网络服务与数据库的 Python 库"
+    example: "帮我用 BioServices 查询 UniProt P00533（EGFR）的功能注释、结构域和相关疾病"
+
+  - id: bulk-rnaseq
+    name: "Bulk RNA-seq 分析"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "批量 RNA-seq 差异表达研究全流程编排工具"
+    example: "帮我设计从 FASTQ 到差异表达的 bulk RNA-seq 流程：对照 vs 吉非替尼处理的 A549 细胞，各 3 个重复"
+
+  - id: cellxgene-census
+    name: "CELLxGENE 单细胞库"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "查询与分析公开版本化单细胞和空间转录组数据的 Python 包"
+    example: "帮我从 CELLxGENE Census 查询人类肺组织中标注为 epithelial cell 的细胞数量（最新 LTS）"
+
+  - id: cirq
+    name: "Cirq 量子计算"
+    category: "机器学习"
+    icon: "🤖"
+    description: "Google 量子计算框架，用于设计、模拟和运行量子电路"
+    example: "帮我用 Cirq 搭建 2 量子比特 Bell 态电路，并在模拟器上采样 1000 次输出概率分布"
+
+  - id: citation-management
+    name: "文献引用管理"
+    category: "科研写作"
+    icon: "📚"
+    description: "学术文献管理：搜索、格式化引用、管理参考文献"
+    example: "帮我生成 Nature 格式引用：DOI 10.1038/s41586-020-2649-2（AlphaFold 论文）"
+
+  - id: clinical-decision-support
+    name: "临床决策支持"
+    category: "临床研究"
+    icon: "🏥"
+    description: "生成专业临床决策支持(CDS)文档"
+    example: "65 岁心房颤动患者同时服用华法林与阿司匹林，帮我评估出血风险与用药建议"
+
+  - id: clinical-reports
+    name: "临床报告生成"
+    category: "临床研究"
+    icon: "🏥"
+    description: "按规范撰写临床报告，覆盖病例报告等"
+    example: "帮我写一份 58 岁男性急性前壁心梗（ST 段抬高）入院初诊病历摘要"
+
+  - id: cobrapy
+    name: "COBRApy 代谢建模"
+    category: "材料与物理"
+    icon: "⚛️"
+    description: "基于约束的代谢网络重建与分析工具"
+    example: "帮我用 COBRApy 加载 e_coli_core 模型，计算葡萄糖为唯一碳源时的最大生长速率"
+
+  - id: consciousness-council
+    name: "意识委员会思辨"
+    category: "研究方法"
+    icon: "🎓"
+    description: "多视角思维审议，从不同立场讨论问题"
+    example: "帮我从神经科学、哲学、工程三个视角讨论「大语言模型是否具有意识」并给出争议点"
+
+  - id: dask
+    name: "Dask 并行计算"
+    category: "数据分析"
+    icon: "📊"
+    description: "大规模pandas/NumPy并行分布式计算"
+    example: "帮我用 Dask 并行读取 10 个各 500MB 的 CSV（列含 timestamp,value），按小时聚合均值"
+
+  - id: database-lookup
+    name: "科学数据库查询"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "查询78个公共科学与生物医学数据库"
+    example: "帮我查询 PDB 中 EGFR 激酶域结构 1M17 的分辨率、配体和实验方法"
+
+  - id: datamol
+    name: "Datamol 分子处理"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "基于RDKit的分子数据处理与特征提取"
+    example: "帮我用 Datamol 标准化并计算这 3 个 SMILES 的 MW/LogP/TPSA：CCO、CC(=O)Oc1ccccc1C(=O)O、COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1"
+
+  - id: deepchem
+    name: "DeepChem 分子学习"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "分子机器学习框架，支持PyTorch和TensorFlow"
+    example: "帮我用 DeepChem 在 ClinTox 数据集上训练一个图神经网络，预测分子临床毒性"
+
+  - id: deeptools
+    name: "deepTools 测序可视化"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "高通量测序数据分析与可视化工具集"
+    example: "帮我用 deepTools 对 H3K27ac ChIP-seq 的 BAM 在 TSS ±2kb 生成 computeMatrix 并画 plotHeatmap"
+
+  - id: depmap
+    name: "DepMap 癌症依赖图谱"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "查询癌症依赖图谱中的基因敲除数据"
+    example: "帮我查询 DepMap 中 BRCA1 在乳腺癌细胞系的 Chronos 依赖分数，并列出最依赖的 5 个细胞系"
+
+  - id: dhdna-profiler
+    name: "DHDNA 认知画像"
+    category: "研究方法"
+    icon: "🎓"
+    description: "从文本中提取认知模式和思维特征"
+    example: "帮我分析下面这段摘要的认知风格特征：「我们假设 EGFR T790M 突变是奥希替尼耐药的主要原因，并通过细胞活力实验验证。」"
+
+  - id: diffdock
+    name: "DiffDock 分子对接"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "基于扩散模型的蛋白-配体对接预测"
+    example: "帮我用 DiffDock 预测吉非替尼（SMILES 已知）与 EGFR（PDB: 1M17）的结合构象，并给出置信度"
+
+  - id: dnanexus-integration
+    name: "DNAnexus 基因组云"
+    category: "平台集成"
+    icon: "☁️"
+    description: "DNAnexus基因组云平台集成工具集"
+    example: "帮我列出 DNAnexus 当前项目中所有 FASTQ 文件，并筛选文件名含 EGFR 的样本"
+
+  - id: docx
+    name: "DOCX 文档处理"
+    category: "文档处理"
+    icon: "📄"
+    description: "创建、编辑和提取Word文档内容"
+    example: "帮我生成一份 Word 论文初稿模板：标题《EGFR 抑制剂耐药机制》，含摘要、引言、方法、结果、讨论五节"
+
+  - id: esm
+    name: "ESM 蛋白质语言模型"
+    category: "蛋白质工程"
+    icon: "🧩"
+    description: "基于进化尺度建模的蛋白质语言模型，用于蛋白质设计与结构预测"
+    example: "帮我用 ESM 计算 GFP（序列来自 UniProt P42212）的序列嵌入，并预测突变 S65T 对稳定性的影响方向"
+
+  - id: etetoolkit
+    name: "ETE 系统发育树"
+    category: "生物信息学"
+    icon: "🌳"
+    description: "Python 库，用于系统发育树的操控、可视化和综合分析"
+    example: "帮我用 ETE 读取一个含 10 个哺乳动物 COI 基因的 Newick 树，标注自展支持率并导出 PNG"
+
+  - id: exa-search
+    name: "Exa 网络检索"
+    category: "科研写作"
+    icon: "🔍"
+    description: "通过 Exa API 进行高质量语义网络搜索与网页内容提取"
+    example: "帮我用 Exa 搜索 2023 年后关于「KRAS G12C 抑制剂临床试验」的网页与论文摘要"
+
+  - id: experimental-design
+    name: "实验设计"
+    category: "数据分析"
+    icon: "📊"
+    description: "实验方案设计，涵盖分组策略、随机化与样本量计算"
+    example: "帮我设计一个 2×3 析因实验：温度（25/37℃）× pH（6/7/8）优化脂肪酶活力，给出随机化与重复数建议"
+
+  - id: exploratory-data-analysis
+    name: "探索性数据分析"
+    category: "数据分析"
+    icon: "📊"
+    description: "自动化探索性数据分析，提供统计汇总、可视化与数据洞察"
+    example: "帮我对鸢尾花 iris 数据集做 EDA：缺失值、类别分布、特征相关性和配对散点图"
+
+  - id: flowio
+    name: "FlowIO 流式细胞"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "Python 库，读取和操控流式细胞术 FCS 标准文件"
+    example: "帮我用 FlowIO 读取一份 FCS 3.0 流式文件，列出荧光通道名称并导出前 1000 个事件为 CSV"
+
+  - id: fluidsim
+    name: "FluidSim 流体仿真"
+    category: "工程仿真"
+    icon: "⚙️"
+    description: "高性能计算流体力学（CFD）Python 框架，支持偏微分方程求解"
+    example: "帮我用 FluidSim 设置二维 NS 方程算例，在 128×128 网格上模拟剪切流并输出涡度场"
+
+  - id: generate-image
+    name: "AI 图像生成"
+    category: "科研写作"
+    icon: "📚"
+    description: "AI 驱动的科学插图、机制示意图与生物概念图像生成"
+    example: "帮我生成一张科研插图：EGFR 信号通路简图，含配体、受体二聚化和下游 MAPK 通路"
+
+  - id: geniml
+    name: "geniml 基因组区间学习"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基因组区间机器学习工具包，提供无监督建模方法"
+    example: "帮我用 Region2Vec 对 ENCODE 的 H3K4me3 BED 峰文件做区域嵌入并做聚类"
+
+  - id: geomaster
+    name: "GeoMaster 遥感地理"
+    category: "数据分析"
+    icon: "📊"
+    description: "地理空间科学综合技能，涵盖遥感、GIS 和空间分析"
+    example: "帮我用 Sentinel-2 L2A（上海市 2023-06）做 NDVI 计算，并输出植被覆盖分类栅格"
+
+  - id: geopandas
+    name: "GeoPandas 地理数据"
+    category: "数据分析"
+    icon: "📊"
+    description: "扩展 pandas 处理 shapefile 等地理空间矢量数据的 Python 库"
+    example: "帮我用 GeoPandas 读取中国省级 GeoJSON，计算各省面积并按面积排序输出前 10"
+
+  - id: get-available-resources
+    name: "可用计算资源检测"
+    category: "基础设施"
+    icon: "🔧"
+    description: "检测 GPU/CPU/内存等计算资源，为科学计算任务生成优化建议"
+    example: "帮我检测当前机器的 CPU 核数、内存、是否有 NVIDIA GPU 及显存大小"
+
+  - id: gget
+    name: "gget 基因组快查"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "命令行与 Python 工具，高效查询 NCBI、Ensembl 等基因组数据库"
+    example: "帮我用 gget 查询人类基因 TP53 的基因信息，并下载其参考蛋白序列"
+
+  - id: ginkgo-cloud-lab
+    name: "Ginkgo 云实验室"
+    category: "实验室自动化"
+    icon: "🤖"
+    description: "在 Ginkgo Bioworks 云平台提交和管理 DNA 合成与细胞实验"
+    example: "帮我查询 Ginkgo Cloud Lab 上大肠杆菌表达纯化 GFP（约 27kDa）的可选套餐与价格区间"
+
+  - id: glycoengineering
+    name: "糖工程分析"
+    category: "蛋白质工程"
+    icon: "🧩"
+    description: "分析蛋白质糖基化位点，扫描 N-糖基化基序并优化抗体糖型"
+    example: "帮我分析曲妥珠单抗重链可变区序列中的 N-糖基化位点（Asn-X-Ser/Thr）"
+
+  - id: gtars
+    name: "gtars 基因组区间"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基于 Rust 的高性能基因组区间分析工具包"
+    example: "帮我用 gtars 计算两个 BED 文件（启动子 vs 增强子）的重叠区间数量与覆盖度"
+
+  - id: histolab
+    name: "histolab 病理切片"
+    category: "医学影像"
+    icon: "🖼️"
+    description: "全切片数字病理图像（WSI）处理与分析工具包"
+    example: "帮我用 histolab 从一张 SVS 全切片中提取组织区域 tile，并过滤空白背景"
+
+  - id: hugging-science
+    name: "Hugging Science 资源目录"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "面向大模型的精选科学数据集、模型与资源导航"
+    example: "帮我在 Hugging Science 目录中查找可用于分子性质预测的公开数据集，并给出加载示例"
+
+  - id: hypogenic
+    name: "HypoGeniC 假设生成"
+    category: "系统生物学"
+    icon: "🔗"
+    description: "利用大模型自动生成和验证科学假设"
+    example: "帮我基于「肿瘤细胞对奥希替尼耐药」现象，生成 5 个可检验的分子机制假设"
+
+  - id: hypothesis-generation
+    name: "科学假设生成"
+    category: "数据分析"
+    icon: "📊"
+    description: "科学假设生成与评估的结构化框架"
+    example: "针对「EGFR 突变肺癌患者对免疫治疗响应较差」，帮我生成 3 个可实验验证的科学假设"
+
+  - id: imaging-data-commons
+    name: "IDC 癌症影像库"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "查询下载NCI癌症影像公共数据"
+    example: "帮我从 NCI IDC 查询肺癌 CT 公开数据集（模态 CT、部位 lung），列出可下载集合 ID"
+
+  - id: infographics
+    name: "信息图生成"
+    category: "科研写作"
+    icon: "📚"
+    description: "用 AI 制作专业信息图表，智能迭代优化"
+    example: "帮我做一张信息图：对比一代/二代/三代 EGFR-TKI 的适应突变与耐药位点"
+
+  - id: iso-13485-certification
+    name: "ISO 13485 合规"
+    category: "法规标准"
+    icon: "⚖️"
+    description: "ISO 13485医疗器械认证文档准备工具包"
+    example: "帮我列出体外诊断试剂公司申请 ISO 13485 时必须建立的 8 类核心程序文件清单"
+
+  - id: labarchive-integration
+    name: "LabArchives Integration"
+    category: "平台集成"
+    icon: "📓"
+    description: "LabArchives电子实验记录本API交互工具包"
+    example: "帮我从 LabArchives 导出笔记本「EGFR 抑制剂筛选」中最近 7 天的条目标题列表"
+
+  - id: lamindb
+    name: "LaminDB 生物数据湖"
+    category: "数据基础设施"
+    icon: "💾"
+    description: "开源生物学科谱数据湖，数据模型可查询"
+    example: "帮我用 LaminDB 注册一份 pbmc3k.h5ad 作为 artifact，并记录来源与基因集特征"
+
+  - id: latchbio-integration
+    name: "LatchBio 工作流平台"
+    category: "工作流平台"
+    icon: "⚙️"
+    description: "对接 Latch 平台构建和运行生物信息学流程"
+    example: "帮我在 LatchBio 上配置并说明如何运行官方 rnaseq 工作流处理一对配对末端 FASTQ"
+
+  - id: latex-posters
+    name: "LaTeX 学术海报"
+    category: "科研写作"
+    icon: "📚"
+    description: "用 LaTeX 制作专业学术海报"
+    example: "帮我用 tikzposter 生成一张 A0 会议海报：标题《EGFR T790M 耐药机制》，含背景/方法/结果三栏"
+
+  - id: liteparse
+    name: "LiteParse 文档解析"
+    category: "文档处理"
+    icon: "📄"
+    description: "基于 Rust 的版面感知文档快速解析器"
+    example: "帮我解析本地 PDF《Nature 2020 AlphaFold》首页，提取标题、作者和摘要文字"
+
+  - id: literature-review
+    name: "文献综述"
+    category: "数据分析"
+    icon: "📊"
+    description: "支持多数据库的系统文献检索与综述工具"
+    example: "帮我写一篇关于 KRAS G12C 抑制剂（sotorasib/adagrasib）的 800 字简短文献综述"
+
+  - id: markdown-mermaid-writing
+    name: "Markdown/Mermaid 绘图"
+    category: "文档处理"
+    icon: "📄"
+    description: "Markdown与Mermaid图表写作，撰写科技文档"
+    example: "帮我用 Mermaid 画 EGFR 激活到耐药的流程图：配体结合→二聚→磷酸化→下游→T790M 耐药"
+
+  - id: market-research-reports
+    name: "市场研究报告"
+    category: "科研写作"
+    icon: "📚"
+    description: "生成顶级咨询公司风格的50页以上全面市场调研报告"
+    example: "帮我概述 2024–2025 年全球 EGFR-TKI 市场规模、主要厂家与竞争格局"
+
+  - id: markitdown
+    name: "MarkItDown 文档转写"
+    category: "文档处理"
+    icon: "📄"
+    description: "Python工具，将20多种文件格式转为LLM优化的Markdown"
+    example: "帮我把 PDF 论文（DOI: 10.1038/s41586-020-2649-2）转成 Markdown，保留标题与章节结构"
+
+  - id: matchms
+    name: "matchms 质谱处理"
+    category: "蛋白质组学"
+    icon: "🔬"
+    description: "质谱数据处理与相似度匹配，内置40余种过滤器和谱图库"
+    example: "帮我用 matchms 比较两张 LC-MS 谱图（前体 m/z 445.1 与 447.1）的余弦相似度"
+
+  - id: matlab
+    name: "MATLAB/Octave 数值计算"
+    category: "工程仿真"
+    icon: "⚙️"
+    description: "矩阵运算、数据分析、可视化与算法开发的数值计算环境"
+    example: "帮我用 Octave/MATLAB 对 100×100 随机矩阵做 SVD，并绘制前 10 个奇异值曲线"
+
+  - id: matplotlib
+    name: "Matplotlib 绘图"
+    category: "数据分析"
+    icon: "📊"
+    description: "Python绘图库，生成出版级静态、动画和交互式图表"
+    example: "帮我用 Matplotlib 画吉非替尼在 0–10 μM 下的细胞活力剂量-反应曲线（含误差棒）"
+
+  - id: medchem
+    name: "MedChem 类药性筛选"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "药物发现分子筛选与优先排序库（datamol-io），支持ADMET分析"
+    example: "帮我用 MedChem 规则过滤这 5 个 SMILES，剔除触犯 PAINS 或 Lipinski 的分子"
+
+  - id: modal
+    name: "Modal 云算力"
+    category: "数据基础设施"
+    icon: "💾"
+    description: "无服务器云平台，零配置运行Python代码，专为机器学习优化"
+    example: "帮我写一个 Modal 任务：在 A10G 上安装 rdkit 并计算阿司匹林的分子量后返回结果"
+
+  - id: molecular-dynamics
+    name: "分子动力学模拟"
+    category: "蛋白质工程"
+    icon: "🧩"
+    description: "使用OpenMM和MDAnalysis运行与分析蛋白质和小分子动力学模拟"
+    example: "帮我用 OpenMM 对 PDB 1AKI（溶菌酶）在 TIP3P 水盒中跑 100 ps NVT 平衡，输出 RMSD"
+
+  - id: molfeat
+    name: "Molfeat 分子特征"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "100余种分子特征提取器的Python库，将分子转为向量表示"
+    example: "帮我用 Molfeat 为吉非替尼、奥希替尼、阿法替尼生成 ECFP4 指纹矩阵"
+
+  - id: networkx
+    name: "NetworkX 网络分析"
+    category: "数据分析"
+    icon: "📊"
+    description: "创建、分析和可视化复杂网络与图形的综合Python工具包"
+    example: "帮我用 NetworkX 构建 STRING 风格的 TP53-MDM2-EGFR 三节点互作网并计算中心性"
+
+  - id: neurokit2
+    name: "NeuroKit2 生理信号"
+    category: "临床研究"
+    icon: "🏥"
+    description: "生理信号处理工具包，支持ECG、EEG、EDA等信号分析"
+    example: "帮我用 NeuroKit2 从一段 60 秒、采样率 1000Hz 的 ECG 中计算 HRV（RMSSD、SDNN）"
+
+  - id: neuropixels-analysis
+    name: "Neuropixels 神经记录"
+    category: "神经科学"
+    icon: "🧠"
+    description: "基于Python分析Neuropixels高密度神经记录数据的工具包"
+    example: "帮我说明如何把 Neuropixels 原始数据经 Kilosort 排序后提取各 unit 的发放率时间序列"
+
+  - id: nextflow
+    name: "Nextflow 工作流"
+    category: "工作流平台"
+    icon: "⚙️"
+    description: "端到端构建、运行和调试Nextflow数据管道与nf-core工作流"
+    example: "帮我写一个 Nextflow DSL2 流程：输入 FASTQ → fastp 质控 → Salmon 定量，并给出 nextflow.config 示例"
+
+  - id: omero-integration
+    name: "OMERO 显微影像"
+    category: "医学影像"
+    icon: "🔬"
+    description: "Python工具与OMERO显微图像数据管理系统交互，支持批量操作"
+    example: "帮我用 OMERO 列出项目「HighContentScreen」中 dataset 的图像数量与像素尺寸"
+
+  - id: onekgpd
+    name: "Onekgpd"
+    category: "法规标准"
+    icon: "⚖️"
+    description: "查询千人基因组数据集（3202个全基因组个体，GRCh38参考）"
+    example: "帮我查询千人基因组中 rs7412（APOE）在东亚人群的等位基因频率"
+
+  - id: open-notebook
+    name: "Open Notebook 研究笔记"
+    category: "平台集成"
+    icon: "📓"
+    description: "开源可自托管的AI科研笔记工具，类似Google NotebookLM"
+    example: "帮我说明如何把 3 篇 EGFR 耐药 PDF 导入 Open Notebook 并生成一集双人播客摘要"
+
+  - id: opentrons-integration
+    name: "Opentrons 移液机器人"
+    category: "实验室自动化"
+    icon: "🤖"
+    description: "创建、编辑和调试Opentrons Python移液协议的工具集"
+    example: "帮我写一段 Opentrons OT-2 Protocol API v2 脚本：从 A1 吸取 50μL 到 96 孔板每孔"
+
+  - id: optimize-for-gpu
+    name: "GPU 加速优化"
+    category: "数据基础设施"
+    icon: "💾"
+    description: "用NVIDIA RAPIDS生态加速Python代码，提升10至1000倍性能"
+    example: "帮我把 pandas 代码 df.groupby(\"user_id\")[\"amount\"].mean() 改写成 cuDF，用于 5000 万行交易表加速"
+
+  - id: pacsomatic
+    name: "pacsomatic 体细胞变异"
+    category: "工作流平台"
+    icon: "⚙️"
+    description: "运行nf-core/pacsomatic肿瘤-正常配対体细胞变异检测流程"
+    example: "帮我准备 nf-core/pacsomatic 的 tumor-normal 配对 samplesheet：样本 patient01（tumor.bam / normal.bam）"
+
+  - id: paper-lookup
+    name: "论文检索"
+    category: "研究方法"
+    icon: "🎓"
+    description: "通过REST API检索10大学术数据库，查找论文和预印本"
+    example: "帮我在 PubMed 与 bioRxiv 检索「EGFR exon20 insertion inhibitor」近两年论文并列出前 10 篇标题"
+
+  - id: paperzilla
+    name: "Paperzilla 论文筛选"
+    category: "研究方法"
+    icon: "🎓"
+    description: "与Agent对话获取Paperzilla项目推荐和经典论文"
+    example: "帮我用 Paperzilla 评估预印本「AlphaFold3」是否值得精读，给出影响分与摘要要点"
+
+  - id: parallel-web
+    name: "Parallel Web 深度检索"
+    category: "科研写作"
+    icon: "🔍"
+    description: "用Parallel Chat API进行网络搜索、内容提取和深度研究"
+    example: "帮我深度检索「FDA 已批准的 EGFR 抑制剂名单及适应症」，输出结构化表格"
+
+  - id: pathml
+    name: "PathML 计算病理"
+    category: "医学影像"
+    icon: "🖼️"
+    description: "计算病理学工具包，支持全切片图像分析和组织分割"
+    example: "帮我用 PathML 对一张乳腺癌 WSI 做组织检测，导出肿瘤区域掩膜坐标"
+
+  - id: pathway-enrichment
+    name: "通路富集分析"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基因列表或排序数据的通路和基因集富集分析"
+    example: "帮我对差异基因列表（上调：EGFR,MET,AXL；下调：CDKN1A,BBC3）做 KEGG/GO 富集分析"
+
+  - id: pdf
+    name: "PDF 文档处理"
+    category: "文档处理"
+    icon: "📄"
+    description: "读取、创建、合并、拆分、旋转、加密和编辑PDF文件"
+    example: "帮我从 PDF 中提取第 2 页表格，并合并同一 PDF 的第 1–3 页为新文件"
+
+  - id: peer-review
+    name: "同行评议"
+    category: "数据分析"
+    icon: "📊"
+    description: "结构化高质量科研论文同行评审的综合工具集"
+    example: "帮我按 Nature 审稿标准，评审一篇关于「EGFR T790M 分子对接虚拟筛选」的方法学稿件提纲"
+
+  - id: pennylane
+    name: "PennyLane 量子机器学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "跨平台量子计算、量子机器学习和量子化学Python库"
+    example: "帮我用 PennyLane 实现 2 量子比特变分分类器，在圆形数据集上训练 50 步并报告损失"
+
+  - id: phylogenetics
+    name: "系统发育分析"
+    category: "生物信息学"
+    icon: "🌳"
+    description: "用MAFFT比对和IQ-TREE 2构建分析系统发育树"
+    example: "帮我用 MAFFT 比对 8 条冠状病毒 Spike 蛋白序列，再用 IQ-TREE 2 构建 ML 树"
+
+  - id: pi-agent
+    name: "Pi Agent 开发"
+    category: "系统生物学"
+    icon: "🔗"
+    description: "使用Pi构建和运行终端编程工作流，含安装配置指南"
+    example: "帮我说明如何用 Pi Agent SDK 注册一个自定义 tool：输入 SMILES 返回分子量"
+
+  - id: polars
+    name: "Polars 数据处理"
+    category: "数据分析"
+    icon: "📊"
+    description: "Rust编写的高性能DataFrame库，提供Python接口"
+    example: "帮我用 Polars 读取 sales.csv（列 date,sku,amount），按 sku 汇总 2024 年销售额 Top 20"
+
+  - id: polars-bio
+    name: "Polars-Bio 基因组区间"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基于 Polars DataFrames 的高速基因组区间运算与生信文件读写"
+    example: "帮我用 Polars-Bio 读取 clinvar.vcf，筛选染色体 7、基因符号 EGFR 的致病性变异"
+
+  - id: pptx
+    name: "PPTX 幻灯片"
+    category: "文档处理"
+    icon: "📄"
+    description: "创建、读取和编辑 PowerPoint 演示文稿（.pptx 文件）"
+    example: "帮我生成 6 页科研汇报 PPT：EGFR 靶向治疗进展（背景/机制/药物/耐药/数据/总结）"
+
+  - id: pptx-posters
+    name: "PPTX 学术海报"
+    category: "科研写作"
+    icon: "📚"
+    description: "用 PowerPoint 制作专业科研海报，适合偏好此格式的研究者"
+    example: "帮我做一张横版 PPT 学术海报：主题「奥希替尼治疗 EGFR 突变 NSCLC」"
+
+  - id: primekg
+    name: "PrimeKG 精准医学图谱"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "查询精准医学知识图谱 PrimeKG，获取多尺度生物学数据"
+    example: "帮我在 PrimeKG 中查询疾病「lung adenocarcinoma」关联的前 10 个基因和已批准药物"
+
+  - id: protocolsio-integration
+    name: "Protocols.io 实验方案"
+    category: "实验室自动化"
+    icon: "📋"
+    description: "对接 protocols.io API，编程化管理和获取实验方案"
+    example: "帮我在 protocols.io 搜索「Western blot EGFR」公开方案，打开浏览量最高的一条并导出步骤摘要"
+
+  - id: pufferlib
+    name: "PufferLib 强化学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "高性能强化学习库，通过优化实现百万级步/秒训练"
+    example: "帮我用 PufferLib 在 CartPole-v1 上训练一个 PPO 策略，训练 10 万步并报告平均回报"
+
+  - id: pydeseq2
+    name: "PyDESeq2 差异表达"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "bulk RNA-seq 差异表达分析的 DESeq2 Python 实现"
+    example: "帮我用 PyDESeq2 分析 counts.csv：条件 control vs gefitinib，找出 padj<0.05 且 |log2FC|>1 的基因"
+
+  - id: pydicom
+    name: "pydicom DICOM 影像"
+    category: "医学影像"
+    icon: "🖼️"
+    description: "纯 Python 读取和处理 DICOM 医学影像文件"
+    example: "帮我用 pydicom 读取一份胸部 CT DICOM，打印 PatientID、层厚和像素间距"
+
+  - id: pyhealth
+    name: "PyHealth 医疗 AI"
+    category: "临床研究"
+    icon: "🏥"
+    description: "全面医疗 AI 工具包，用于开发、测试和部署医疗 ML 模型"
+    example: "帮我用 PyHealth 在 MIMIC 示例数据上训练一个住院死亡率预测模型并报告 AUROC"
+
+  - id: pylabrobot
+    name: "PyLabRobot 液体处理"
+    category: "实验室自动化"
+    icon: "🤖"
+    description: "硬件无关的 Python SDK，实现自动化与自主实验室控制"
+    example: "帮我用 PyLabRobot 写脚本：用 P300 从试剂槽向 96 孔板每孔分配 100 μL PBS"
+
+  - id: pymatgen
+    name: "Pymatgen 材料科学"
+    category: "材料与物理"
+    icon: "⚛️"
+    description: "材料基因组 Python 库，用于材料科学计算与分析"
+    example: "帮我用 Pymatgen 读取 POSCAR 中的硅晶体，计算空间群并输出常规晶胞参数"
+
+  - id: pymc
+    name: "PyMC 贝叶斯建模"
+    category: "机器学习"
+    icon: "🤖"
+    description: "全面贝叶斯统计建模与概率编程 Python 库"
+    example: "帮我用 PyMC 对 y = 2.5x + ε 的模拟数据做贝叶斯线性回归，给出斜率后验均值与 94% HDI"
+
+  - id: pymoo
+    name: "PyMOO 多目标优化"
+    category: "机器学习"
+    icon: "🤖"
+    description: "基于进化算法的多目标优化 Python 框架"
+    example: "帮我用 PyMOO 求解 ZDT1 双目标问题，种群 100、进化 200 代，并绘制 Pareto 前沿"
+
+  - id: pyopenms
+    name: "pyOpenMS 质谱蛋白组"
+    category: "蛋白质组学"
+    icon: "🔬"
+    description: "面向蛋白质组和代谢组学的质谱数据分析（LC-MS/MS）"
+    example: "帮我用 pyOpenMS 读取 mzML，提取 MS1 基峰色谱并找到强度最高的前 5 个峰"
+
+  - id: pysam
+    name: "pysam 基因组文件"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "读取和操作基因组数据文件（SAM/BAM/CRAM 比对、VCF 变异）"
+    example: "帮我用 pysam 提取 BAM 中 chr7:55,186,000-55,210,000（EGFR）区域的覆盖深度均值"
+
+  - id: pytdc
+    name: "PyTDC 药物发现基准"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "访问TDC整理好的生物医学数据集的Python库"
+    example: "帮我用 PyTDC 加载 ADMET 的 Caco-2 数据集，划分训练/测试集并报告样本量"
+
+  - id: pytorch-lightning
+    name: "PyTorch Lightning"
+    category: "机器学习"
+    icon: "🤖"
+    description: "让PyTorch代码更简洁、去除重复模板的深度学习框架"
+    example: "帮我用 Lightning 写一个 MNIST CNN 训练脚本：max_epochs=3，自动记录 val_acc"
+
+  - id: pyzotero
+    name: "pyzotero Zotero 文献"
+    category: "科研写作"
+    icon: "📚"
+    description: "通过API管理Zotero文献库的Python客户端"
+    example: "帮我用 pyzotero 在个人文库中搜索关键词「EGFR TKI resistance」，列出最新 10 条条目标题"
+
+  - id: qiskit
+    name: "Qiskit 量子计算"
+    category: "机器学习"
+    icon: "🤖"
+    description: "开源量子计算框架，用于构建和运行量子电路"
+    example: "帮我用 Qiskit 构建 GHZ 三比特纠缠电路，在 Aer 模拟器上采样 2048 次并画直方图"
+
+  - id: qutip
+    name: "QuTiP 量子光学"
+    category: "机器学习"
+    icon: "🤖"
+    description: "Python量子工具箱，用于模拟量子力学系统"
+    example: "帮我用 QuTiP 模拟驱动二能级原子的 Rabi 振荡，绘制 0–10 周期的激发态布居数"
+
+  - id: rdkit
+    name: "RDKit 化学信息学"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "开源药物发现化学信息学工具包"
+    example: "帮我用 RDKit 计算阿司匹林 SMILES=CC(=O)Oc1ccccc1C(=O)O 的分子量、LogP、TPSA 和氢键供体/受体数"
+
+  - id: research-grants
+    name: "科研基金申请"
+    category: "研究方法"
+    icon: "🎓"
+    description: "撰写NSF、NIH等基金申请提案的辅助工具"
+    example: "帮我起草一份国自然青年基金摘要（限 400 字）：研究方向为 EGFR 耐药的代谢重编程"
+
+  - id: research-lookup
+    name: "研究资料检索"
+    category: "研究方法"
+    icon: "🎓"
+    description: "搜索、提取、整合学术论文生成可直接引用的证据"
+    example: "帮我查找「liquid biopsy EGFR mutation detection」的最新综述与关键临床试验注册号"
+
+  - id: rowan
+    name: "Rowan 量子化学云"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "云端量子化学计算平台，提供Python API"
+    example: "帮我用 Rowan 计算乙醇（CCO）的 GFN2-xTB 优化能量，并返回最终构象 SMILES"
+
+  - id: scanpy
+    name: "Scanpy 单细胞分析"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基于AnnData的单细胞RNA-seq分析工具包"
+    example: "帮我用 Scanpy 分析 pbmc3k：质控（mito<20%）、归一化、PCA/UMAP、Leiden 聚类并找各簇 marker"
+
+  - id: scholar-evaluation
+    name: "学者评价"
+    category: "研究方法"
+    icon: "🎓"
+    description: "用ScholarEval框架系统评估学术研究和论文"
+    example: "帮我用学者评价框架打分：审稿意见是否具体、是否可操作，针对「缺少阴性对照」这类评论"
+
+  - id: scientific-brainstorming
+    name: "科学头脑风暴"
+    category: "数据分析"
+    icon: "📊"
+    description: "AI对话式探讨研究思路，激发创新想法"
+    example: "围绕「如何克服奥希替尼中枢穿透不足」，帮我头脑风暴 8 个可落地的研究思路"
+
+  - id: scientific-critical-thinking
+    name: "科学批判思维"
+    category: "数据分析"
+    icon: "📊"
+    description: "提供严谨科学推理与评估的方法论工具"
+    example: "请批判性评估实验设计：只用 1 个细胞系、n=3、无盲法，声称新化合物「显著优于吉非替尼」"
+
+  - id: scientific-schematics
+    name: "科学示意图"
+    category: "科研写作"
+    icon: "📚"
+    description: "用AI自动生成出版级科学示意图"
+    example: "帮我画一张出版级示意图：抗体-药物偶联物（ADC）内吞与 payload 释放过程"
+
+  - id: scientific-slides
+    name: "学术幻灯片"
+    category: "科研写作"
+    icon: "📚"
+    description: "用PPT和LaTeX Beamer制作学术报告幻灯片"
+    example: "帮我做 8 页组会 PPT：汇报本周 EGFR 抑制剂对接实验进展与下周计划"
+
+  - id: scientific-visualization
+    name: "科研可视化"
+    category: "数据分析"
+    icon: "📊"
+    description: "用 matplotlib 绘制出版级科研图表的最佳实践与模板"
+    example: "帮我画一张出版级火山图：横轴 log2FC，纵轴 -log10(padj)，高亮 EGFR 与 MET"
+
+  - id: scientific-writing
+    name: "科研写作"
+    category: "数据分析"
+    icon: "📊"
+    description: "科研论文撰写、结构化与格式化的全流程工具包"
+    example: "帮我把下列要点扩写成 Introduction 两段英文（投稿 Cancer Research 风格）：EGFR 突变、TKI、耐药"
+
+  - id: scikit-bio
+    name: "scikit-bio 生物序列"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "Python 生物信息学库，提供数据结构、算法与格式解析器"
+    example: "帮我用 scikit-bio 计算 5 条 16S 序列的两两 Jaccard 距离并做 UPGMA 聚类"
+
+  - id: scikit-learn
+    name: "scikit-learn 机器学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "经典机器学习 Python 标准库，涵盖分类、回归与聚类"
+    example: "帮我用 scikit-learn 在乳腺癌 Wisconsin 数据集上训练随机森林，输出 5 折交叉验证 AUC"
+
+  - id: scikit-survival
+    name: "scikit-survival 生存分析"
+    category: "机器学习"
+    icon: "🤖"
+    description: "基于 scikit-learn 的生存分析与删失数据时间建模"
+    example: "帮我用 scikit-survival 的 CoxPH 拟合肺癌生存数据（年龄、分期、EGFR 突变为协变量）并报告危险比"
+
+  - id: scvelo
+    name: "scVelo RNA 速率"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "RNA 速度分析，从未剪接/剪接 mRNA 推断细胞状态转变"
+    example: "帮我用 scVelo 对已有 loom/h5ad（含 spliced/unspliced）计算 RNA velocity 并在 UMAP 上画流场"
+
+  - id: scvi-tools
+    name: "scvi-tools 单细胞模型"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "基于 PyTorch 的单细胞组学概率深度学习分析框架"
+    example: "帮我用 scVI 整合两个批次的 pbmc h5ad，校正批次后做 UMAP 并比较校正前后混合程度"
+
+  - id: seaborn
+    name: "Seaborn 统计绘图"
+    category: "数据分析"
+    icon: "📊"
+    description: "面向数据集的统计可视化，支持自动置信区间与热力图"
+    example: "帮我用 Seaborn 画一张聚类热图：行是 20 个差异基因，列是 6 个样本（control/gefitinib）"
+
+  - id: shap
+    name: "SHAP 模型解释"
+    category: "机器学习"
+    icon: "🤖"
+    description: "基于博弈论 Shapley 值的模型可解释性统一分析框架"
+    example: "帮我用 SHAP 解释乳腺癌随机森林模型，给出对「恶性」预测贡献最大的 5 个特征"
+
+  - id: simpy
+    name: "SimPy 离散事件仿真"
+    category: "工程仿真"
+    icon: "⚙️"
+    description: "基于进程离散事件仿真框架，建模排队与资源系统"
+    example: "帮我用 SimPy 模拟一个 3 台 PCR 仪的实验室排队：每天 50 个样本，统计平均等待时间"
+
+  - id: stable-baselines3
+    name: "Stable-Baselines3 强化学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "基于 PyTorch 的强化学习库，含 PPO、SAC 等主流算法"
+    example: "帮我用 Stable-Baselines3 的 PPO 训练 LunarLander-v2，训练 20 万步并保存模型"
+
+  - id: statistical-analysis
+    name: "统计分析"
+    category: "数据分析"
+    icon: "📊"
+    description: "假设检验、效应量、功效分析与 APA 格式报告全流程指导"
+    example: "帮我做两组细胞活力数据的独立样本 t 检验（control vs 1μM 吉非替尼，各 n=6）并报告效应量"
+
+  - id: statistical-power
+    name: "统计功效与样本量"
+    category: "数据分析"
+    icon: "📊"
+    description: "样本量与统计功效分析，用于研究设计与可检测效应评估"
+    example: "帮我计算：两组均数差 0.5、标准差 0.8、α=0.05、功效 0.8 时，每组需要多少样本量"
+
+  - id: statsmodels
+    name: "statsmodels 统计建模"
+    category: "机器学习"
+    icon: "🤖"
+    description: "统计建模与计量经济学，含 OLS、GLM、ARIMA 等"
+    example: "帮我用 statsmodels 对计数数据拟合泊松回归：因变量 colony_count，自变量 dose 与 batch"
+
+  - id: sympy
+    name: "SymPy 符号数学"
+    category: "工程仿真"
+    icon: "⚙️"
+    description: "Python 符号数学库，支持精确代数运算与公式推导"
+    example: "帮我用 SymPy 对 f(x)=x**3*sin(x) 求二阶导数，并在 x=π/2 处求值"
+
+  - id: tamarind
+    name: "Tamarind 蛋白结构云"
+    category: "蛋白质工程"
+    icon: "🧩"
+    description: "在 Tamarind 上运行大量开源分子设计与结构生物学工具"
+    example: "帮我用 Tamarind 对 EGFR（序列或 PDB 1M17）与吉非替尼跑一次 DiffDock/Vina 对接并返回姿态"
+
+  - id: tiledbvcf
+    name: "TileDB-VCF"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "高性能 C++ 库，支持 Python 和 CLI，高效存储与检索 VCF 数据"
+    example: "帮我用 TileDB-VCF 查询 chr7:55,186,932（EGFR L858R）位点在 100 个样本中的基因型"
+
+  - id: timesfm-forecasting
+    name: "TimesFM 时序预测"
+    category: "机器学习"
+    icon: "🤖"
+    description: "用 Google TimesFM 模型做零样本时间序列预测"
+    example: "帮我用 TimesFM 对过去 36 个月月度销售额序列预测未来 6 个月，并画出预测区间"
+
+  - id: torch-geometric
+    name: "Torch Geometric 图学习"
+    category: "机器学习"
+    icon: "🤖"
+    description: "在 PyTorch 2.6+ 上用 PyG 构建图神经网络"
+    example: "帮我用 PyG 在 MUTAG 分子图数据集上训练 GCN，报告测试集准确率"
+
+  - id: torchdrug
+    name: "TorchDrug 药物发现 ML"
+    category: "化学信息学"
+    icon: "🧪"
+    description: "基于 PyTorch 的药物发现 ML 平台，内置 40+ 数据集和 20+ GNN 模型"
+    example: "帮我用 TorchDrug 在 ClinTox 上训练属性预测模型，筛选对肝毒性低风险的候选分子"
+
+  - id: transformers
+    name: "Transformers 预训练模型"
+    category: "机器学习"
+    icon: "🤖"
+    description: "Hugging Face Transformers 5.x 用于 NLP、视觉、音频和多模态任务"
+    example: "帮我用 transformers 微调 bert-base-chinese，做二分类：医学摘要是否与「肺癌靶向治疗」相关"
+
+  - id: treatment-plans
+    name: "治疗方案生成"
+    category: "临床研究"
+    icon: "🏥"
+    description: "用 LaTeX/PDF 生成简洁专业的临床治疗方案文档"
+    example: "帮我为 EGFR 19del 晚期 NSCLC 初治患者起草一线靶向治疗方案要点（药物、检查、随访）"
+
+  - id: umap-learn
+    name: "UMAP 降维可视化"
+    category: "机器学习"
+    icon: "🤖"
+    description: "UMAP 降维算法的 Python 实现，适用于高维数据可视化"
+    example: "帮我用 UMAP 把 pbmc3k 的 50 维 PCA 嵌入降到 2 维，并按 Leiden 簇着色散点图"
+
+  - id: usfiscaldata
+    name: "美国财政部财政数据"
+    category: "科学数据库"
+    icon: "🗄️"
+    description: "美国财政部免费开放 REST API，提供 54 个财政数据集"
+    example: "帮我查询美国财政部 Debt to the Penny 数据集中 2024-01-01 的公共债务总额"
+
+  - id: vaex
+    name: "Vaex 大数据分析"
+    category: "数据分析"
+    icon: "📊"
+    description: "高性能 Python 库，支持惰性 out-of-core 大数据表处理与可视化"
+    example: "帮我用 Vaex 打开一个 10GB 的 parquet（列 user_id,ts,amount），按天聚合交易总额"
+
+  - id: venue-templates
+    name: "投稿模板"
+    category: "科研写作"
+    icon: "📚"
+    description: "获取主流期刊/会议的 LaTeX 模板、格式规范与投稿指南"
+    example: "帮我生成 NeurIPS 2024 格式的 LaTeX 论文模板骨架（含 abstract 与 introduction）"
+
+  - id: what-if-oracle
+    name: "情景假设分析"
+    category: "研究方法"
+    icon: "🎓"
+    description: "结构化 What-If 情景分析，支持 4-6 分支可能性推演"
+    example: "如果奥希替尼一线治疗后出现 C797S 耐药，帮我推演 4 条可能的后续治疗分支与风险"
+
+  - id: xlsx
+    name: "XLSX 表格处理"
+    category: "文档处理"
+    icon: "📄"
+    description: "电子表格创建、编辑与分析，支持公式、格式与数据透视"
+    example: "帮我生成 Excel：工作表「对接结果」含分子名、SMILES、Vina 分数，并按分数升序排序"
+
+  - id: zarr-python
+    name: "Zarr 数组存储"
+    category: "生物信息学"
+    icon: "🧬"
+    description: "Zarr-Python 3.x 实现分块压缩的 N 维数组，适合本地与云存储"
+    example: "帮我用 Zarr 创建一个形状 (1000,1000,50) 的 float32 数组（分块 100×100×10），写入随机数并读回校验"

@@ -1,0 +1,42 @@
+<!-- Conversation mode snippets from matvenus.com/chat/agent/:id (CDP 2026-07-17) -->
+
+<!-- Outer white shell -->
+<div class="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-none bg-white bg-clip-content p-0 md:rounded-[24px] md:p-2">
+
+<!-- Message column -->
+<div class="flex min-h-full min-w-0 flex-col items-center px-2 pb-6 md:px-4 md:pb-10">
+  <div class="flex w-full min-w-0 max-w-2xl flex-col lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl">
+    <div class="ant-bubble-list w-full max-w-2xl min-w-0 lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl">
+
+      <!-- User -->
+      <div class="ant-bubble ant-bubble-end">
+        <div class="ant-bubble-content ant-bubble-content-filled"
+             style="background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.88); padding: 12px 16px; border-radius: 8px;"></div>
+      </div>
+
+      <!-- Assistant -->
+      <div class="ant-bubble ant-bubble-start">
+        <div class="ant-bubble-header">
+          <div class="flex items-center gap-2 pb-2">
+            <div class="text-lg font-semibold" style="color: rgb(75, 164, 248);">MatwingsVenus™</div>
+          </div>
+        </div>
+        <div class="ant-bubble-content ant-bubble-content-borderless">
+          <!-- tool panel example -->
+          <div class="sandbox-process-panel my-3 w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70"></div>
+          <!-- answer prose: max-w-none, no card -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Conversation input (compact, NOT md:min-h-[120px]) -->
+<div class="mx-auto flex w-full max-w-2xl min-w-[200px] flex-col gap-2 lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl">
+  <div class="relative w-full rounded-[24px] border border-slate-300 bg-white/80 shadow-[0_4px_24px_-4px_rgba(0,0,0,0.1)] backdrop-blur-2xl transition-all duration-300 focus-within:border-indigo-500 focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.15)] mx-auto max-w-2xl min-w-[200px] lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl">
+    <div class="px-5 py-3 md:px-6">
+      <textarea class="w-full resize-none border-0 bg-transparent px-0 py-0 text-base leading-relaxed outline-none placeholder:text-slate-400 focus:ring-0 text-slate-700"></textarea>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,53 @@
+<!-- Extracted from https://matvenus.com/chat/agent via browser CDP (2026-07-16) -->
+<!-- Reference snippets for Mammoth Agent UI parity -->
+
+<!-- Main layout -->
+<main class="mx-auto flex w-full max-w-7xl flex-col items-center px-3 pt-4 pb-16 md:px-8 md:pt-40 md:pb-20">
+
+<!-- Welcome header -->
+<div class="animate-slide-up relative mt-2 mb-4 flex h-[100px] w-full items-center justify-center text-center md:h-[150px] md:max-w-[880px]">
+  <h1 class="relative z-10 inline-flex items-center justify-center gap-2 bg-linear-to-r from-slate-900 via-slate-700 to-slate-900 bg-clip-text text-xl leading-tight font-extrabold text-transparent md:text-[30px]">
+    <div class="relative shrink-0" style="width: 80px; height: 80px;">
+      <img class="relative z-10 h-full w-full object-contain" />
+    </div>
+    <span class="inline-flex items-center">你好，我是 <span class="bg-linear-to-r from-[#2563EB] to-[#60A5FA] bg-clip-text text-transparent">&nbsp;MatwingsVenus™</span></span>
+  </h1>
+</div>
+
+<!-- Input box -->
+<div class="sticky top-0 z-30 -mt-2 w-full pt-2">
+  <div class="relative z-20 mx-auto w-full max-w-5xl mb-6">
+    <div class="relative my-4 w-full rounded-2xl border border-[#808080] bg-white transition-all duration-300 md:rounded-[20px] focus-within:border-[#808080] focus-within:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.15)]">
+      <textarea class="max-h-[400px] min-h-[56px] w-full resize-none border-0 bg-transparent px-0 py-0 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400 focus:ring-0 md:min-h-[120px] md:py-0 md:text-lg" />
+    </div>
+  </div>
+</div>
+
+<!-- Category tabs -->
+<div class="animate-slide-up mx-auto flex min-w-max flex-nowrap justify-start gap-2 px-4 md:flex-wrap md:justify-center md:gap-3 md:px-0">
+  <button class="group relative flex cursor-pointer items-center justify-center px-3 py-2 text-sm whitespace-nowrap transition-all duration-300 select-none md:px-4 font-bold text-slate-900"><span>全部</span></button>
+  <button class="group relative flex cursor-pointer items-center justify-center px-3 py-2 text-sm whitespace-nowrap transition-all duration-300 select-none md:px-4 font-medium text-[#666666]"><span>蛋白查询</span></button>
+</div>
+
+<!-- Skill card -->
+<button class="group flex h-full cursor-pointer flex-col items-start gap-3 rounded-[20px] border border-[#E5E5E5] p-4 text-left transition-all duration-300 hover:border-slate-200 hover:shadow-md md:p-5 active:scale-[1.02] bg-[radial-gradient(60%_60%_at_100%_100%,_#E1EAFF_0%,_#FFFFFF_100%)]">
+  <div class="flex items-center gap-2">
+    <div class="flex size-7 shrink-0 items-center justify-center rounded-full text-blue-600 border-[#2563EB] bg-[#2563EB]/15"></div>
+    <span class="text-sm font-normal text-black md:text-base">膜蛋白搜索</span>
+  </div>
+  <p class="line-clamp-2 text-xs leading-relaxed break-all text-[#666666] transition-colors md:text-sm">...</p>
+</button>
+
+<!-- Skill grid -->
+<div class="animate-slide-up mx-auto w-full max-w-5xl px-1">
+  <div class="grid grid-cols-1 gap-2 transition-all md:grid-cols-2 md:gap-3 lg:grid-cols-3"></div>
+</div>
+
+<!-- Sidebar shell -->
+<div class="flex h-full w-[320px] min-w-[320px] flex-col overflow-hidden border border-[#ECECEC] bg-[#F9FAFB]">
+  <div class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium border border-primary bg-primary text-white shadow-[0_1px_2px_rgba(15,23,42,0.06)]">发起新对话</div>
+  <div class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 hover:bg-primary/10 hover:text-primary">技能广场</div>
+</div>
+
+<!-- Main content area bg -->
+<main class="relative h-full min-w-0 grow overflow-auto bg-[#F9FAFB]">
