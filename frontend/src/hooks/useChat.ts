@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { api } from '../api/client'
-import type { Message, Session } from '../api/client'
+import type { Message, SelectedSkillHint, Session } from '../api/client'
 
 export function useChat(initialSessionId?: string) {
   const [sessionId, setSessionId] = useState<string | undefined>(initialSessionId)
@@ -16,7 +16,7 @@ export function useChat(initialSessionId?: string) {
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, selectedSkill?: SelectedSkillHint) => {
       if (!text.trim() || loading) return
       setLoading(true)
       setError(null)
@@ -30,7 +30,7 @@ export function useChat(initialSessionId?: string) {
       setMessages((prev) => [...prev, userMsg])
 
       try {
-        const res = await api.chat(text.trim(), sessionId)
+        const res = await api.chat(text.trim(), sessionId, selectedSkill)
         if (!sessionId) setSessionId(res.session_id)
         const assistantMsg: Message = {
           id: crypto.randomUUID(),

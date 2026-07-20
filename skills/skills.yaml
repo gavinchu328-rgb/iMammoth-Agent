@@ -88,6 +88,14 @@ skills:
     description: "从找靶点到合成分析跑完整流程"
     example: "帮我对非小细胞肺癌做一轮完整的药物发现，从找靶点一路做到候选分子评估和合成分析"
 
+  # ── OpenClaw Workspace 技能 ───────────────────────────────
+  - id: chemistry-calculation
+    name: "化学计算"
+    category: "化学信息学"
+    icon: "⚗️"
+    description: "分子性质、Lipinski、指纹、DFT、ADMET 等本地化学计算（chemistry-calc）"
+    example: "咖啡因的口服生物利用度怎么样？它的极性表面积是多少？"
+
   - id: exp_design
     name: "智能实验设计"
     category: "实验设计"

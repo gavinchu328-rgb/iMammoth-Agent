@@ -1,0 +1,551 @@
+databases:
+- id: open-targets-platform
+  name: Open Targets Platform
+  category: 靶点与疾病
+  icon: 🎯
+  description: 疾病-靶点关联数据库，整合遗传学、组学与文献证据，返回 EFO 疾病 ID、基因符号、关联评分与可药性信息。
+  volume: 在线 API（全平台数据）
+  source_type: online
+  example_query: 非小细胞肺癌
+  searchable: true
+  project: 药物研发
+- id: chembl-37-sqlite
+  name: ChEMBL 37
+  category: 化合物与活性
+  icon: 🧪
+  description: 生物活性化合物数据库，含 SMILES、IC50/Ki/Kd/EC50 等测定数据、靶点与化合物关联。本地只读 SQLite，禁止调用 ChEMBL Web API。
+  volume: 约 29 GB；292 万化合物 / 2450 万活性记录 / 1.85 万靶点
+  source_type: local
+  example_query: EGFR
+  searchable: true
+  project: 药物研发
+- id: drugbank-approved-csv
+  name: DrugBank 批准药物
+  category: 化合物与活性
+  icon: 💊
+  description: FDA 等批准药物参考集，用于 ADMET 预测结果与已上市药物分布的百分位对比。
+  volume: 约 2,579 条药物记录
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 药物研发
+- id: zinc-stock-hdf5
+  name: ZINC Stock
+  category: 逆合成与库存
+  icon: 📦
+  description: 可购买化合物库存索引（ZINC20 衍生），供 AiZynthFinder 逆合成路线叶节点 in_stock 校验。
+  volume: 约 633 MB；1740 万 InChI Key
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 药物研发
+- id: uspto-reaction-templates
+  name: USPTO 逆合成模板
+  category: 逆合成与库存
+  icon: ⚗️
+  description: 美国专利反应模板与 ONNX 扩展/过滤模型，驱动 AiZynthFinder 逆合成搜索。
+  volume: 约 754 MB（含模板与模型权重）
+  source_type: local
+  example_query: CC(=O)Oc1ccccc1C(=O)O
+  searchable: false
+  project: 药物研发
+- id: rcsb-pdb
+  name: RCSB PDB
+  category: 蛋白结构
+  icon: 🧬
+  description: 美国蛋白质结构数据库主镜像，下载 PDB 结构文件用于对接与口袋预测。
+  volume: 在线 API（全库结构）
+  source_type: online
+  example_query: 1M17
+  searchable: true
+  project: 药物研发
+- id: pdbe-pdb
+  name: PDBe
+  category: 蛋白结构
+  icon: 🇪🇺
+  description: 欧洲 PDB 镜像，作为 RCSB 下载失败时的备用结构来源。
+  volume: 在线 API
+  source_type: online
+  example_query: 1m17
+  searchable: true
+  project: 药物研发
+- id: pdbj-pdb
+  name: PDBj
+  category: 蛋白结构
+  icon: 🇯🇵
+  description: 日本 PDB 镜像，第三备用结构下载源。
+  volume: 在线 API
+  source_type: online
+  example_query: 1M17
+  searchable: true
+  project: 药物研发
+- id: rcsb-structure-thumbnails
+  name: RCSB 结构缩略图
+  category: 蛋白结构
+  icon: 🖼️
+  description: RCSB CDN 提供的蛋白结构预览图，用于前端蛋白卡片展示。
+  volume: 在线 CDN
+  source_type: online
+  example_query: 1m17
+  searchable: true
+  project: 药物研发
+- id: pubchem-pug-rest
+  name: PubChem PUG REST
+  category: 化合物与活性
+  icon: 🔬
+  description: NCBI PubChem 化合物 REST API，用于 SMILES 转 2D/3D 结构可视化（前端展示）。
+  volume: 在线 API（亿级化合物）
+  source_type: online
+  example_query: CC(=O)Oc1ccccc1C(=O)O
+  searchable: true
+  project: 药物研发
+- id: disease-zh-en-map
+  name: 中英文疾病名映射
+  category: 靶点与疾病
+  icon: 🌐
+  description: 静态中英文疾病名称对照表，将中文疾病名翻译为 Open Targets 可检索的英文术语。
+  volume: 约 377 条映射
+  source_type: local
+  example_query: 肺癌
+  searchable: true
+  project: 药物研发
+- id: disease-zh-en-llm-cache
+  name: 疾病名 LLM 翻译缓存
+  category: 靶点与疾病
+  icon: 💬
+  description: OpenClaw 翻译的中文疾病名缓存，静态映射表未命中时使用。
+  volume: 运行时增长（当前约数十条）
+  source_type: local
+  example_query: 囊性纤维化
+  searchable: true
+  project: 药物研发
+- id: chembl-chemreps
+  name: ChEMBL Chemreps 轻量表
+  category: 化合物与活性
+  icon: 📋
+  description: ChEMBL 化合物化学表示轻量导出，含 SMILES/InChI 等，计划用于快速检索（尚未接入流水线）。
+  volume: 约 738 MB
+  source_type: local
+  example_query: CHEMBL25
+  searchable: false
+  project: 药物研发
+- id: chembl-morgan-fps
+  name: ChEMBL Morgan 指纹
+  category: 化合物与活性
+  icon: 🔢
+  description: ChEMBL 全库 Morgan 分子指纹，计划用于相似性搜索（FPSim2，P2 优先级）。
+  volume: 约 1.5 GB
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 药物研发
+- id: chembl-morgan-h5
+  name: ChEMBL 指纹 HDF5
+  category: 化合物与活性
+  icon: 🗃️
+  description: ChEMBL Morgan 指纹 HDF5 格式存储，计划用于大规模相似性检索。
+  volume: 约 315 MB
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 药物研发
+- id: chembl-sdf
+  name: ChEMBL 全量 SDF
+  category: 化合物与活性
+  icon: 📁
+  description: ChEMBL 全库 3D 结构 SDF 导出，用于批量构象生成（一般未直接使用）。
+  volume: 约 7.5 GB
+  source_type: local
+  example_query: CHEMBL25
+  searchable: false
+  project: 药物研发
+- id: chembl-uniprot-mapping
+  name: ChEMBL↔UniProt 映射
+  category: 靶点与疾病
+  icon: 🔗
+  description: ChEMBL 靶点与 UniProt 蛋白 ID 对照表，计划用于桥接 AlphaFold 结构获取。
+  volume: 约 1.2 MB；1.7 万条映射
+  source_type: local
+  example_query: P00533
+  searchable: true
+  project: 药物研发
+- id: admet-ai-models
+  name: ADMET-AI 参考模型
+  category: 模型与工具
+  icon: 📈
+  description: ADMET 端点预测模型（Caco-2、hERG、AMES 等 10 项）及 DrugBank 参考分布，非查询型数据库。
+  volume: 约 24 MB 模型权重
+  source_type: local
+  example_query: CC(=O)Oc1ccccc1C(=O)O
+  searchable: false
+  project: 药物研发
+- id: pocketxmol-checkpoints
+  name: PocketXMol 生成模型
+  category: 模型与工具
+  icon: 🧫
+  description: 基于结构的从头分子设计（SBDD）模型权重，训练数据来自 CrossDock/MOAD 等。
+  volume: 3×233 MB 检查点
+  source_type: local
+  example_query: 1M17
+  searchable: false
+  project: 药物研发
+- id: p2rank-2-5-1
+  name: P2Rank 口袋预测
+  category: 模型与工具
+  icon: 🕳️
+  description: 基于 Java 的蛋白结合口袋预测工具及配置，用于对接前口袋定位。
+  volume: 约 555 MB
+  source_type: local
+  example_query: 1M17
+  searchable: false
+  project: 药物研发
+- id: autodock-vina
+  name: AutoDock Vina
+  category: 模型与工具
+  icon: 🔩
+  description: 分子对接引擎二进制，执行蛋白-配体结合姿态打分。
+  volume: 约 4 MB
+  source_type: local
+  example_query: 1M17
+  searchable: false
+  project: 药物研发
+- id: postgresql-ai4drug
+  name: PostgreSQL 应用库
+  category: 平台基础设施
+  icon: 🗄️
+  description: AI4Drug 平台会话、消息、工具调用与后台任务状态存储。
+  volume: 运行时动态增长
+  source_type: local
+  example_query: 最近 10 条会话
+  searchable: false
+  project: 药物研发
+- id: minio-reports
+  name: MinIO 对象存储
+  category: 平台基础设施
+  icon: ☁️
+  description: 流水线报告（MD/JSON）、清洗后 PDB 等中间产物的内网对象存储。
+  volume: Bucket ai4drug-reports
+  source_type: local
+  example_query: ai4drug-reports
+  searchable: false
+  project: 药物研发
+- id: openclaw-llm
+  name: OpenClaw 对话代理
+  category: 平台基础设施
+  icon: 🤖
+  description: 可选 LLM 服务，用于中文疾病名翻译与编排器对话（非结构化数据库）。
+  volume: 在线 API
+  source_type: online
+  example_query: 将「非小细胞肺癌」翻译为英文医学术语
+  searchable: false
+  project: 药物研发
+- id: alphafold-db-subset
+  name: AlphaFold DB 本地子集
+  category: 蛋白结构
+  icon: 🧊
+  description: 计划缓存的 AlphaFold 预测结构子集，用于靶点结构获取（P1，目录尚未创建）。
+  volume: 计划本地缓存
+  source_type: local
+  example_query: P00533
+  searchable: false
+  project: 药物研发
+- id: opentargets-query-cache
+  name: Open Targets 查询缓存
+  category: 靶点与疾病
+  icon: 💾
+  description: Open Targets GraphQL 查询结果本地缓存，减少重复 API 调用（P1 计划）。
+  volume: 计划本地缓存
+  source_type: local
+  example_query: Lung Carcinoma
+  searchable: false
+  project: 药物研发
+- id: pdb-metadata-cache
+  name: PDB 元数据缓存
+  category: 蛋白结构
+  icon: 📇
+  description: PDB 结构元数据本地缓存，加速结构检索与展示（P1 计划）。
+  volume: 计划本地缓存
+  source_type: local
+  example_query: 1M17
+  searchable: false
+  project: 药物研发
+- id: knowledge-base
+  name: 基因/疾病知识库
+  category: 靶点与疾病
+  icon: 📚
+  description: 计划中的基因与疾病领域知识库目录（P1，尚未创建）。
+  volume: 计划本地
+  source_type: local
+  example_query: EGFR
+  searchable: false
+  project: 药物研发
+- id: session-pipeline-data
+  name: 会话流水线数据
+  category: 平台基础设施
+  icon: 📂
+  description: 每次药物研发流水线运行产生的中间产物（PDB、口袋、分子、对接结果等）。
+  volume: 约 2 GB；600+ 会话目录
+  source_type: local
+  example_query: 最近会话
+  searchable: false
+  project: 药物研发
+- id: oakclaw-compounds
+  name: 物质科学化合物库
+  category: 化合物
+  icon: 🧪
+  description: 物质科学平台 PostgreSQL 中的化合物主表（当前主要为 BLOOD_EXPOSOME 血液暴露组学化合物），支持名称/SMILES/分子式检索。
+  volume: 约 67,287 条化合物
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: molecular-library-registry
+  name: 分子库注册表
+  category: 化合物
+  icon: 📚
+  description: 命名分子库目录（Enamine REAL、ChemSpace、ChEMBL、PubChem、ZINC20、DrugBank 等），记录规划规模与已导入数量。
+  volume: 15 个库登记；已导入化合物约 6.7 万
+  source_type: local
+  example_query: CHEMBL
+  searchable: true
+  project: 物质科学
+- id: unified-reactions-duckdb
+  name: 统一反应库
+  category: 化学反应
+  icon: ⚗️
+  description: 物质科学反应知识库主库，合并 Pistachio / Woshi / USPTO / ORD 四大来源，经 reaction-db-api 提供检索。
+  volume: 约 2928 万条反应 · 23 GB
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: reaction-pistachio
+  name: Pistachio 专利反应
+  category: 化学反应
+  icon: 📜
+  description: NextMove Pistachio 专利反应集，含 NameRXN、反应条件与操作步骤等丰富元数据。
+  volume: 约 1504 万条
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: reaction-woshi
+  name: Woshi 中文反应
+  category: 化学反应
+  icon: 📰
+  description: 中文文献/专利抽取的化学反应数据，含全文条件描述。
+  volume: 约 1106 万条
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: reaction-uspto
+  name: USPTO Reaction
+  category: 化学反应
+  icon: 🇺🇸
+  description: 美国专利局反应 SMILES 数据集，常用于机器学习反应预测。
+  volume: 约 181 万条
+  source_type: local
+  example_query: CCO
+  searchable: true
+  project: 物质科学
+- id: reaction-ord
+  name: ORD 开放反应数据库
+  category: 化学反应
+  icon: 🌐
+  description: Open Reaction Database，含原子映射、催化剂与溶剂等信息。
+  volume: 约 137 万条
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: molecules-duckdb
+  name: 分子结构参考库
+  category: 化合物
+  icon: 🧬
+  description: 本地 DuckDB 多表分子参考库（PubChem、MOLPILE、HMDB、ChEBI 等 14 个表），目前主要在磁盘侧，尚未完全接入 Web API。
+  volume: 约 3.45 亿条 · 15 GB
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 物质科学
+- id: mol-pubchem-118m
+  name: PubChem 118M
+  category: 化合物
+  icon: 🔬
+  description: molecules.duckdb 中的 PubChem 大规模分子表。
+  volume: 约 1.18 亿条
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 物质科学
+- id: mol-molpile-222m
+  name: MOLPILE 222M
+  category: 化合物
+  icon: 🧱
+  description: 大规模分子堆积库，用于化学空间覆盖与相似性检索（DuckDB 表）。
+  volume: 约 2.22 亿条
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 物质科学
+- id: mol-hmdb
+  name: HMDB 人类代谢组
+  category: 代谢组学
+  icon: 🩸
+  description: Human Metabolome Database 参考分子，含于 molecules.duckdb。
+  volume: 约 197,066 条
+  source_type: local
+  example_query: glucose
+  searchable: false
+  project: 物质科学
+- id: mol-chebi
+  name: ChEBI
+  category: 代谢组学
+  icon: 🏷️
+  description: Chemical Entities of Biological Interest 化学实体词典。
+  volume: 约 134,218 条
+  source_type: local
+  example_query: ethanol
+  searchable: false
+  project: 物质科学
+- id: mol-lotus
+  name: LOTUS 天然产物
+  category: 代谢组学
+  icon: 🌿
+  description: 天然产物结构参考集（LOTUS）。
+  volume: 约 147,983 条
+  source_type: local
+  example_query: caffeine
+  searchable: false
+  project: 物质科学
+- id: mol-blood-exposome
+  name: BLOOD_EXPOSOME
+  category: 代谢组学
+  icon: 💉
+  description: 血液暴露组学化合物；已导入 PostgreSQL 化合物表，可在平台中检索。
+  volume: 约 67,287 / 52,842（库登记与 DuckDB）
+  source_type: local
+  example_query: aspirin
+  searchable: true
+  project: 物质科学
+- id: mol-lipid-maps
+  name: LIPID MAPS
+  category: 代谢组学
+  icon: 🫧
+  description: 脂质分子结构参考库。
+  volume: 约 43,554 条
+  source_type: local
+  example_query: cholesterol
+  searchable: false
+  project: 物质科学
+- id: mol-npatlas
+  name: NPAtlas
+  category: 代谢组学
+  icon: 🍃
+  description: 天然产物图谱库。
+  volume: 约 33,497 条
+  source_type: local
+  example_query: penicillin
+  searchable: false
+  project: 物质科学
+- id: mol-foodb
+  name: FooDB
+  category: 代谢组学
+  icon: 🍎
+  description: 食物成分化学数据库。
+  volume: 约 9,728 条
+  source_type: local
+  example_query: caffeine
+  searchable: false
+  project: 物质科学
+- id: compounds-seed-json
+  name: 种子化合物 JSON
+  category: 化合物
+  icon: 🌱
+  description: 本地启动用的种子化合物静态 JSON，用于开发/演示导入。
+  volume: 30 条
+  source_type: local
+  example_query: ethanol
+  searchable: true
+  project: 物质科学
+- id: dft-descriptors-csv
+  name: Auto-QChem 描述符 CSV
+  category: 量子化学
+  icon: ⚛️
+  description: DFT/量子化学描述符参考表（HOMO/LUMO、偶极矩等），供 DFT Worker 查询与落库。
+  volume: CSV 参考表（少量样例行）
+  source_type: local
+  example_query: CC([C@@H](CO1)N=C1C2=CC=C(C(F)(F)F)C=N2)(C)C
+  searchable: true
+  project: 物质科学
+- id: dft-descriptor-postgres
+  name: DFT 描述符结果表
+  category: 量子化学
+  icon: 📊
+  description: PostgreSQL 中已计算并持久化的 DFT 描述符结果。
+  volume: 运行时增长（当前约数条）
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 物质科学
+- id: chemma-sjtu
+  name: ChemMA 化学大模型
+  category: AI 分子模型
+  icon: 🤖
+  description: 上海交大 ChemMA 远程化学 LLM，用于反应预测、逆合成与催化剂建议。
+  volume: 在线 API
+  source_type: online
+  example_query: 预测阿司匹林相关反应产物
+  searchable: false
+  project: 物质科学
+- id: biomedgpt-mol-api
+  name: BioMedGPT-Mol
+  category: AI 分子模型
+  icon: 🧠
+  description: 本地多模态分子大模型服务，支持逆合成、催化剂与分子生成问答。
+  volume: 本地模型约 16 GB
+  source_type: local
+  example_query: 阿司匹林逆合成路线
+  searchable: false
+  project: 物质科学
+- id: admet-ai-huaxue
+  name: ADMET-AI（物质科学）
+  category: ADMET / 药化
+  icon: 📈
+  description: 物质科学平台对接的 Chemprop ADMET 属性预测服务。
+  volume: 本地推理服务
+  source_type: local
+  example_query: CC(=O)Oc1ccccc1C(=O)O
+  searchable: false
+  project: 物质科学
+- id: rdkit-api-huaxue
+  name: RDKit 化学计算 API
+  category: 化学信息学工具
+  icon: 🧮
+  description: 分子标准化、物化性质、Lipinski、指纹与相似性/子结构等化学计算接口。
+  volume: 本地工具服务
+  source_type: local
+  example_query: CCO
+  searchable: false
+  project: 物质科学
+- id: hermes-agent-gateway
+  name: Hermes Agent 网关
+  category: 平台基础设施
+  icon: 💬
+  description: 物质科学对话编排网关，规划并调用化学工具完成问答。
+  volume: 在线 API（内网）
+  source_type: online
+  example_query: 查阿司匹林分子量
+  searchable: false
+  project: 物质科学
+- id: oakclaw-postgres
+  name: oakclaw PostgreSQL
+  category: 平台基础设施
+  icon: 🗄️
+  description: 物质科学主业务库：化合物、分子库注册、DFT、实验订单与导入历史等。
+  volume: 运行时动态增长
+  source_type: local
+  example_query: aspirin
+  searchable: false
+  project: 物质科学

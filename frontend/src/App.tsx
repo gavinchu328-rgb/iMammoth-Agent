@@ -5,6 +5,8 @@ import ChatPage, { type ChatPageHandle } from './pages/ChatPage'
 import SkillsPage from './pages/SkillsPage'
 import AgentsPage from './pages/AgentsPage'
 import AgentDetailPage from './pages/AgentDetailPage'
+import DataPlazaPage from './pages/DataPlazaPage'
+import DataSearchPage from './pages/DataSearchPage'
 import { useSessions } from './hooks/useChat'
 
 export default function App() {
@@ -80,6 +82,8 @@ export default function App() {
               element={<ChatPage ref={chatRef} onSessionChange={handleSessionChange} />}
             />
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/data" element={<DataPlazaPage />} />
+            <Route path="/data/:databaseId" element={<DataSearchPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/agents/:agentId" element={<AgentDetailPage />} />
           </Routes>

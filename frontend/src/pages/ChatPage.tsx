@@ -7,7 +7,17 @@ import SkillPlaza from '../components/SkillPlaza'
 import MessageList from '../components/MessageList'
 import ChatInput from '../components/ChatInput'
 
-type LocationState = { prompt?: string }
+type LocationState = { prompt?: string; skill?: Skill }
+
+function buildSkillSystemPrompt(skill: Skill) {
+  return [
+    `本轮对话请优先匹配并调用与「${skill.name}」对应的技能/工具。`,
+    `技能分类：${skill.category}。`,
+    `技能说明：${skill.description}。`,
+    `优先按这个技能的能力范围来理解用户问题；如果存在对应的 OpenClaw skill、MCP 工具或内置工具，请先调用它，而不是直接凭记忆作答。`,
+    `如果该技能能够产生结构化结果，请先拿到结果再组织中文回答。`,
+  ].join('\n')
+}
 
 export interface ChatPageHandle {
   newChat: () => void
@@ -25,6 +35,7 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
   const location = useLocation()
   const { messages, loading, error, isConversation, loadSession, sendMessage, newChat } = useChat()
   const [input, setInput] = useState('')
+  const [selectedSkill, setSelectedSkill] = useState<Skill | undefined>(undefined)
   const [skills, setSkills] = useState<Skill[]>([])
   const [restoring, setRestoring] = useState(Boolean(routeSessionId))
 
@@ -32,11 +43,12 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
     api.skills().then(setSkills).catch(console.error)
   }, [])
 
-  // 从技能广场跳转时携带 prompt，填入对话框后清掉 state，避免刷新重复填充
+  // 从技能广场跳转时携带 prompt + skill，填入对话框后清掉 state，避免刷新重复填充
   useEffect(() => {
-    const prompt = (location.state as LocationState | null)?.prompt
-    if (!prompt) return
-    setInput(prompt)
+    const state = location.state as LocationState | null
+    if (!state?.prompt && !state?.skill) return
+    if (state.prompt) setInput(state.prompt)
+    if (state.skill) setSelectedSkill(state.skill)
     navigate(location.pathname, { replace: true, state: {} })
   }, [location.state, location.pathname, navigate])
 
@@ -59,7 +71,11 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
           navigate('/', { replace: true })
         }
       } finally {
-        if (!cancelled) setRestoring(false)
+        if (!cancelled) {
+          setRestoring(false)
+          // Restored sessions don't know which skill card was chosen last.
+          setSelectedSkill(undefined)
+        }
       }
     })()
     return () => {
@@ -72,6 +88,7 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
     newChat: () => {
       newChat()
       setInput('')
+      setSelectedSkill(undefined)
       setRestoring(false)
       navigate('/')
       onSessionChange?.(undefined)
@@ -79,12 +96,25 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
     loadSession: (id: string) => {
       navigate(`/c/${id}`)
     },
-    setPrompt: (text: string) => setInput(text),
+    setPrompt: (text: string) => {
+      setInput(text)
+      // If external code sets a prompt, we don't assume a specific selected skill.
+      setSelectedSkill(undefined)
+    },
   }))
 
   const handleSend = async () => {
-    const sid = await sendMessage(input)
+    const sid = await sendMessage(
+      input,
+      selectedSkill
+        ? {
+            name: selectedSkill.name,
+            systemPrompt: buildSkillSystemPrompt(selectedSkill),
+          }
+        : undefined,
+    )
     setInput('')
+    setSelectedSkill(undefined)
     if (sid) {
       onSessionChange?.(sid)
       if (!routeSessionId) navigate(`/c/${sid}`, { replace: true })
@@ -123,7 +153,10 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
             <div className="mt-2 w-full">
               <SkillPlaza
                 skills={skills.slice(0, 30)}
-                onSelect={(s) => setInput(s.example)}
+                onSelect={(s) => {
+                  setSelectedSkill(s)
+                  setInput(s.example)
+                }}
                 compact
                 showTitle={false}
               />

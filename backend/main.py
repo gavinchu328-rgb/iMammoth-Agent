@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -11,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from config import settings
 from database import engine, get_db
+from data_search import run_search
 from models import Base, Message, Session
 from openclaw_client import OpenClawError, chat_completion, health_check
 
@@ -35,6 +37,8 @@ class MessageIn(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str
+    selected_skill_name: str | None = None
+    selected_skill_system_prompt: str | None = None
 
 
 class MessageOut(BaseModel):
@@ -67,6 +71,33 @@ class SkillOut(BaseModel):
     example: str
 
 
+class DatabaseOut(BaseModel):
+    id: str
+    name: str
+    category: str
+    icon: str
+    description: str
+    volume: str
+    source_type: str
+    example_query: str
+    searchable: bool
+    project: str = "药物研发"
+
+
+class DatabaseSearchRequest(BaseModel):
+    query: str
+
+
+class DatabaseSearchResponse(BaseModel):
+    database_id: str
+    query: str
+    searchable: bool
+    result: dict | None = None
+    error: str | None = None
+    message: str | None = None
+    chat_prompt: str | None = None
+
+
 # ── Helpers ──────────────────────────────────────────────
 
 def _load_skills() -> list[SkillOut]:
@@ -74,6 +105,18 @@ def _load_skills() -> list[SkillOut]:
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return [SkillOut(**s) for s in data["skills"]]
+
+
+def _load_databases() -> list[DatabaseOut]:
+    path = Path(__file__).parent / settings.databases_path
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    out: list[DatabaseOut] = []
+    for raw in data["databases"]:
+        raw = dict(raw)
+        raw.setdefault("project", "药物研发")
+        out.append(DatabaseOut(**raw))
+    return out
 
 
 def _session_to_out(s: Session) -> SessionOut:
@@ -116,6 +159,43 @@ async def api_health():
 @app.get("/api/skills", response_model=list[SkillOut])
 async def get_skills():
     return _load_skills()
+
+
+@app.get("/api/databases", response_model=list[DatabaseOut])
+async def get_databases():
+    return _load_databases()
+
+
+@app.get("/api/databases/{database_id}", response_model=DatabaseOut)
+async def get_database(database_id: str):
+    for db in _load_databases():
+        if db.id == database_id:
+            return db
+    raise HTTPException(404, "数据源不存在")
+
+
+@app.post("/api/databases/{database_id}/search", response_model=DatabaseSearchResponse)
+async def search_database(database_id: str, req: DatabaseSearchRequest):
+    if not req.query.strip():
+        raise HTTPException(400, "查询内容不能为空")
+    meta = None
+    for db in _load_databases():
+        if db.id == database_id:
+            meta = db
+            break
+    if not meta:
+        raise HTTPException(404, "数据源不存在")
+
+    out = run_search(database_id, req.query.strip())
+    return DatabaseSearchResponse(
+        database_id=database_id,
+        query=req.query.strip(),
+        searchable=bool(out.get("searchable")),
+        result=out.get("result"),
+        error=out.get("error"),
+        message=out.get("message"),
+        chat_prompt=out.get("chat_prompt"),
+    )
 
 
 @app.get("/api/sessions", response_model=list[SessionOut])
@@ -184,10 +264,29 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     user_msg = Message(session_id=session.id, role="user", content=req.message.strip())
     db.add(user_msg)
 
-    messages_for_openclaw = history + [{"role": "user", "content": req.message.strip()}]
+    # OpenClaw 的 system 消息会影响技能匹配与工具选择。
+    messages_for_openclaw = [{"role": "system", "content": settings.openclaw_system_prompt}]
+
+    if req.selected_skill_system_prompt:
+        selected = (req.selected_skill_name or "").strip()
+        messages_for_openclaw.append(
+            {
+                "role": "system",
+                "content": (
+                    f"用户已在猛犸前端选择了技能卡片：`{selected}`。\n"
+                    f"{req.selected_skill_system_prompt.strip()}"
+                ),
+            }
+        )
+
+    messages_for_openclaw.extend(history)
+    messages_for_openclaw.append({"role": "user", "content": req.message.strip()})
 
     try:
-        reply, usage = await chat_completion(messages_for_openclaw)
+        reply, usage = await chat_completion(
+            messages_for_openclaw,
+            session_id=str(session.id),
+        )
     except OpenClawError as e:
         raise HTTPException(502, str(e)) from e
 
@@ -199,6 +298,8 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         completion_tokens=usage.get("completion_tokens") if usage else None,
     )
     db.add(assistant_msg)
+
+    session.updated_at = datetime.now(timezone.utc)
 
     if session.title == "新对话" or not history:
         session.title = _title_from_message(req.message)

@@ -32,7 +32,7 @@ export default function MessageList({ messages, loading }: Props) {
             ) : (
               <div key={msg.id} className="w-full min-w-0">
                 <div className="flex items-center gap-2 pb-2">
-                  <div className="text-lg font-semibold text-[#4BA4F8]">猛犸智能体</div>
+                  <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
                 </div>
                 <div className="w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 md:px-5 md:py-4">
                   <div className="assistant-prose">
@@ -46,7 +46,7 @@ export default function MessageList({ messages, loading }: Props) {
           {loading && (
             <div className="w-full min-w-0">
               <div className="flex items-center gap-2 pb-2">
-                <div className="text-lg font-semibold text-[#4BA4F8]">猛犸智能体</div>
+                <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
               </div>
               <div className="flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 text-sm text-slate-500">
                 <div className="flex gap-1">

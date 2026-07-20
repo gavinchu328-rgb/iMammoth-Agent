@@ -4,7 +4,7 @@ export default function WelcomeHeader() {
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          backgroundImage: 'url(/huixiang.png)',
+          backgroundImage: 'url(/raw.webp)',
           backgroundSize: '100% 100%',
           opacity: 0.38,
           filter: 'blur(50px)',
@@ -16,7 +16,7 @@ export default function WelcomeHeader() {
             alt="猛犸智能体"
             className="relative z-10 h-full w-full object-contain"
             draggable={false}
-            src="/huixiang.png"
+            src="/raw.webp"
           />
         </div>
         <span className="inline-flex items-center">

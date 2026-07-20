@@ -12,7 +12,7 @@ export default function SkillsPage() {
   }, [])
 
   const handleSelect = (skill: Skill) => {
-    navigate('/', { state: { prompt: skill.example.trim() } })
+    navigate('/', { state: { prompt: skill.example.trim(), skill } })
   }
 
   return (

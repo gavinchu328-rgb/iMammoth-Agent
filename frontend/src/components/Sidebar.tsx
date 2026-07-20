@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink, useLocation } from 'react-router-dom'
 import type { Session } from '../api/client'
 
@@ -54,6 +56,18 @@ function NavItem({
   )
 }
 
+function formatSessionTime(iso?: string) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const y = d.getFullYear()
+  const m = d.getMonth() + 1
+  const day = d.getDate()
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${y}.${m}.${day} ${hh}:${mm}`
+}
+
 export default function Sidebar({
   sessions,
   currentSessionId,
@@ -65,6 +79,26 @@ export default function Sidebar({
 }: Props) {
   const location = useLocation()
   const isNewChatActive = location.pathname === '/'
+  const [tooltip, setTooltip] = useState<{
+    title: string
+    time: string
+    top: number
+    left: number
+  } | null>(null)
+
+  const showSessionTooltip = (
+    e: React.MouseEvent<HTMLElement>,
+    title: string,
+    time: string,
+  ) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    setTooltip({
+      title,
+      time,
+      top: rect.top + rect.height / 2,
+      left: rect.right + 8,
+    })
+  }
 
   if (collapsed) {
     return (
@@ -90,13 +124,13 @@ export default function Sidebar({
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-1">
             <img
-              src="/huixiang.png"
-              alt="汇像智能实验室"
+              src="/raw.webp"
+              alt="猛犸智能体"
               className="h-8 w-8 shrink-0 rounded object-contain"
             />
             <div className="min-w-0 flex-1 overflow-hidden pr-1">
               <div className="truncate text-[16px] font-bold text-[#111827] md:text-[17px]">
-                汇像智能实验室
+                猛犸智能体
               </div>
             </div>
           </div>
@@ -135,6 +169,15 @@ export default function Sidebar({
             }
           />
           <NavItem
+            to="/data"
+            label="数据广场"
+            icon={
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" className="h-4 w-4">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7zm4 2h8M8 13h5" />
+              </svg>
+            }
+          />
+          <NavItem
             to="/agents"
             label="智能体广场"
             icon={
@@ -152,48 +195,69 @@ export default function Sidebar({
           {sessions.length === 0 && (
             <p className="px-2.5 py-2 text-sm text-gray-400">暂无对话记录</p>
           )}
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              className={`group flex w-full items-center gap-1 rounded-lg transition-all duration-200 ${
-                s.id === currentSessionId
-                  ? 'bg-white font-semibold text-slate-900 shadow-sm'
-                  : 'text-gray-600 hover:bg-primary/10 hover:text-primary'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => onSelectSession(s.id)}
-                className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-sm"
-                title={s.title}
+          {sessions.map((s) => {
+            const timeLabel = formatSessionTime(s.updated_at || s.created_at)
+            return (
+              <div
+                key={s.id}
+                className={`group flex w-full items-center gap-1 rounded-lg transition-all duration-200 ${
+                  s.id === currentSessionId
+                    ? 'bg-white font-semibold text-slate-900 shadow-sm'
+                    : 'text-gray-600 hover:bg-primary/10 hover:text-primary'
+                }`}
+                onMouseEnter={(e) => showSessionTooltip(e, s.title, timeLabel)}
+                onMouseLeave={() => setTooltip(null)}
               >
-                {s.title}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (window.confirm(`确定删除对话「${s.title}」？`)) {
-                    onDeleteSession(s.id)
-                  }
-                }}
-                className="mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
-                title="删除对话"
-                aria-label="删除对话"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3m-7 0h8"
-                  />
-                </svg>
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => onSelectSession(s.id)}
+                  className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-sm"
+                >
+                  {s.title}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm(`确定删除对话「${s.title}」？`)) {
+                      onDeleteSession(s.id)
+                    }
+                  }}
+                  className="mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+                  title="删除对话"
+                  aria-label="删除对话"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3m-7 0h8"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
         </div>
       </div>
+
+      {tooltip &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[9999] w-max max-w-[260px] -translate-y-1/2 rounded-md bg-slate-900 px-2.5 py-1.5 text-left shadow-lg"
+            style={{ top: tooltip.top, left: tooltip.left }}
+            role="tooltip"
+          >
+            <div className="text-[12px] leading-snug font-medium break-words text-white">
+              {tooltip.title}
+            </div>
+            {tooltip.time && (
+              <div className="mt-0.5 text-[11px] leading-snug text-slate-300">{tooltip.time}</div>
+            )}
+          </div>,
+          document.body,
+        )}
     </aside>
   )
 }
