@@ -1,3 +1,5 @@
+import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -5,16 +7,30 @@ from pathlib import Path
 import yaml
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from chat_helpers import prepare_chat_session, save_assistant_reply, title_from_message
 from config import settings
 from database import engine, get_db
 from data_search import run_search
 from models import Base, Message, Session
-from openclaw_client import OpenClawError, chat_completion, health_check
+from openclaw_client import OpenClawError, chat_completion, chat_completion_stream, health_check
+from openclaw_session_watch import wait_for_session_jsonl, watch_session_jsonl
+from process_log_store import (
+    PROCESS_LOG_DONE_TAG,
+    PROCESS_LOG_DONE_TYPE,
+    append_process_done,
+    append_process_event,
+    find_process_log,
+    is_process_log_done,
+    process_log_path,
+)
+from reply_rebuild import merge_live_steps, rebuild_reply_with_live_steps
+from zh_normalize import normalize_step_zh
 
 app = FastAPI(title="猛犸智能体 API")
 
@@ -135,7 +151,9 @@ def _openclaw_system_messages() -> list[dict]:
                 "role": "system",
                 "content": (
                     "以下是【过程日志输出规范】。你每次回复用户的最终 message content "
-                    "必须严格遵守该规范（以「## 分析过程」开头，以「## 最终回答」收尾）：\n\n"
+                    "必须严格遵守该规范（以「## 分析过程」开头，以「## 最终回答」收尾）。\n"
+                    "另外：你的内部 thinking / 推理过程必须全程使用简体中文，"
+                    "禁止出现 “The user wants...” 这类英文思考。\n\n"
                     f"{spec}"
                 ),
             }
@@ -162,8 +180,34 @@ def _session_to_out(s: Session) -> SessionOut:
 
 
 def _title_from_message(text: str) -> str:
-    t = text.strip().replace("\n", " ")
-    return t[:40] + ("..." if len(t) > 40 else "")
+    return title_from_message(text)
+
+
+def _build_openclaw_messages(
+    req: ChatRequest,
+    history: list[dict],
+) -> list[dict]:
+    messages_for_openclaw = _openclaw_system_messages()
+
+    if req.selected_skill_system_prompt:
+        selected = (req.selected_skill_name or "").strip()
+        messages_for_openclaw.append(
+            {
+                "role": "system",
+                "content": (
+                    f"用户已在猛犸前端选择了技能卡片：`{selected}`。\n"
+                    f"{req.selected_skill_system_prompt.strip()}"
+                ),
+            }
+        )
+
+    messages_for_openclaw.extend(history)
+    messages_for_openclaw.append({"role": "user", "content": req.message.strip()})
+    return messages_for_openclaw
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 # ── Routes ───────────────────────────────────────────────
@@ -268,43 +312,13 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     if not req.message.strip():
         raise HTTPException(400, "消息不能为空")
 
-    history: list[dict] = []
+    session, history, _ = await prepare_chat_session(
+        session_id=req.session_id,
+        message=req.message,
+        db=db,
+    )
 
-    if req.session_id:
-        result = await db.execute(
-            select(Session)
-            .options(selectinload(Session.messages))
-            .where(Session.id == uuid.UUID(req.session_id))
-        )
-        session = result.scalar_one_or_none()
-        if not session:
-            raise HTTPException(404, "会话不存在")
-        history = [{"role": m.role, "content": m.content} for m in session.messages]
-    else:
-        session = Session(title=_title_from_message(req.message))
-        db.add(session)
-        await db.flush()
-
-    user_msg = Message(session_id=session.id, role="user", content=req.message.strip())
-    db.add(user_msg)
-
-    # OpenClaw 的 system 消息会影响技能匹配与工具选择。
-    messages_for_openclaw = _openclaw_system_messages()
-
-    if req.selected_skill_system_prompt:
-        selected = (req.selected_skill_name or "").strip()
-        messages_for_openclaw.append(
-            {
-                "role": "system",
-                "content": (
-                    f"用户已在猛犸前端选择了技能卡片：`{selected}`。\n"
-                    f"{req.selected_skill_system_prompt.strip()}"
-                ),
-            }
-        )
-
-    messages_for_openclaw.extend(history)
-    messages_for_openclaw.append({"role": "user", "content": req.message.strip()})
+    messages_for_openclaw = _build_openclaw_messages(req, history)
 
     try:
         reply, usage = await chat_completion(
@@ -331,6 +345,183 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     return ChatResponse(session_id=str(session.id), reply=reply, usage=usage)
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    if not req.message.strip():
+        raise HTTPException(400, "消息不能为空")
+
+    session, history, _ = await prepare_chat_session(
+        session_id=req.session_id,
+        message=req.message,
+        db=db,
+    )
+    session_id_str = str(session.id)
+    messages_for_openclaw = _build_openclaw_messages(req, history)
+    had_history = bool(history)
+
+    async def event_generator():
+        stop_event = asyncio.Event()
+        seen_record_ids: set[str] = set()
+        chunks: list[str] = []
+        live_steps: list[dict] = []
+        queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
+        stream_error: str | None = None
+
+        yield _sse("session", {"session_id": session_id_str})
+        append_process_event(session_id_str, {"type": "session", "session_id": session_id_str})
+
+        async def pump_content() -> None:
+            nonlocal stream_error
+            try:
+                async for delta in chat_completion_stream(
+                    messages_for_openclaw,
+                    session_id=session_id_str,
+                ):
+                    chunks.append(delta)
+                    append_process_event(session_id_str, {"type": "delta", "content": delta})
+                    await queue.put(("delta", {"content": delta}))
+            except OpenClawError as e:
+                stream_error = str(e)
+                await queue.put(("error", {"message": stream_error}))
+            finally:
+                stop_event.set()
+                await queue.put(("_end", {}))
+
+        async def pump_steps() -> None:
+            path = await wait_for_session_jsonl(session_id_str)
+            if not path:
+                return
+            async for step in watch_session_jsonl(
+                path,
+                seen_record_ids=seen_record_ids,
+                stop_event=stop_event,
+            ):
+                step = await normalize_step_zh(step)
+                append_process_event(session_id_str, {"type": "step", **step})
+                await queue.put(("step", step))
+
+        content_task = asyncio.create_task(pump_content())
+        steps_task = asyncio.create_task(pump_steps())
+
+        try:
+            while True:
+                kind, data = await queue.get()
+                if kind == "_end":
+                    break
+                if kind == "step":
+                    live_steps.append(data)
+                yield _sse(kind, data)
+        finally:
+            stop_event.set()
+            for task in (content_task, steps_task):
+                task.cancel()
+            await asyncio.gather(content_task, steps_task, return_exceptions=True)
+
+        raw_reply = "".join(chunks)
+        reply = (
+            rebuild_reply_with_live_steps(raw_reply, live_steps)
+            if live_steps and raw_reply and not stream_error
+            else raw_reply
+        )
+        if reply and not stream_error:
+            await save_assistant_reply(
+                session=session,
+                reply=reply,
+                user_message=req.message,
+                had_history=had_history,
+            )
+
+        done_payload = append_process_done(
+            session_id_str,
+            reply=reply,
+            error=stream_error,
+            steps=merge_live_steps(live_steps),
+        )
+        # SSE 同时发 mammoth_done（规范）与 done（兼容旧前端）
+        yield _sse(PROCESS_LOG_DONE_TYPE, done_payload)
+        yield _sse("done", done_payload)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/sessions/{session_id}/process-log/stream")
+async def stream_process_log(session_id: str):
+    """Tail the per-session process log file and push new lines as SSE.
+
+    读到结束标签 <<<MAMMOTH_DONE>>> / type=mammoth_done 后立刻关闭流。
+    """
+
+    async def tail_generator():
+        # 读：按日期目录查找；文件尚未创建时等写入落到当天目录
+        path = find_process_log(session_id)
+        offset = 0
+        idle_rounds = 0
+        max_idle = 300  # ~60s without new data
+
+        while idle_rounds < max_idle:
+            if path is None or not path.exists():
+                path = find_process_log(session_id) or process_log_path(session_id)
+            if path.exists():
+                try:
+                    with path.open("rb") as f:
+                        f.seek(offset)
+                        chunk = f.read()
+                        if chunk:
+                            offset = f.tell()
+                            idle_rounds = 0
+                            for line in chunk.decode("utf-8", errors="replace").splitlines():
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                # 纯文本结束标签
+                                if line == PROCESS_LOG_DONE_TAG:
+                                    yield _sse(
+                                        PROCESS_LOG_DONE_TYPE,
+                                        {
+                                            "type": PROCESS_LOG_DONE_TYPE,
+                                            "tag": PROCESS_LOG_DONE_TAG,
+                                            "session_id": session_id,
+                                        },
+                                    )
+                                    return
+                                try:
+                                    row = json.loads(line)
+                                except json.JSONDecodeError:
+                                    continue
+                                # 旧日志里英文思考：读出时再译一次
+                                if row.get("type") == "step" and row.get("kind") == "thinking":
+                                    row = await normalize_step_zh(row)
+                                event_type = row.get("type", "log")
+                                yield _sse(event_type, row)
+                                if is_process_log_done(row):
+                                    return
+                        else:
+                            idle_rounds += 1
+                except OSError:
+                    idle_rounds += 1
+            else:
+                idle_rounds += 1
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        tail_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":

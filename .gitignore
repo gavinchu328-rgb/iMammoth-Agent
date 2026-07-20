@@ -28,3 +28,5 @@ npm-debug.log*
 # Runtime
 *.pid
 nohup.out
+process_logs/
+data/process_logs/

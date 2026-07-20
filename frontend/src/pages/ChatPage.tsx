@@ -33,7 +33,7 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
   const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { messages, loading, error, isConversation, loadSession, sendMessage, newChat } = useChat()
+  const { messages, loading, streaming, error, isConversation, loadSession, sendMessage, newChat } = useChat()
   const [input, setInput] = useState('')
   const [selectedSkill, setSelectedSkill] = useState<Skill | undefined>(undefined)
   const [skills, setSkills] = useState<Skill[]>([])
@@ -165,7 +165,7 @@ const ChatPage = forwardRef<ChatPageHandle, Props>(function ChatPage({ onSession
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none bg-white p-0 md:m-2 md:rounded-[24px]">
-          <MessageList messages={messages} loading={loading} />
+          <MessageList messages={messages} loading={loading} streaming={streaming} />
           {error && <div className="px-4 py-2 text-center text-sm text-red-600">{error}</div>}
           <ChatInput value={input} onChange={setInput} onSend={handleSend} loading={loading} variant="footer" />
         </div>

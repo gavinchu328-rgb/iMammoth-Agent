@@ -40,6 +40,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  process_steps?: LiveProcessStep[]
 }
 
 export interface Session {
@@ -48,6 +49,100 @@ export interface Session {
   created_at: string
   updated_at: string
   messages?: Message[]
+}
+
+export interface LiveProcessStep {
+  kind: 'thinking' | 'tool'
+  title: string
+  status: string
+  name: string
+  input: string
+  result: string
+  detail?: string
+  tool_call_id?: string
+  record_id?: string
+  is_result_update?: boolean
+}
+
+export interface ChatStreamDone {
+  session_id: string
+  reply: string
+  error?: string | null
+  steps?: LiveProcessStep[]
+  ok?: boolean
+  tag?: string
+}
+
+export interface ChatStreamHandlers {
+  onSession?: (sessionId: string) => void
+  onDelta?: (content: string) => void
+  onStep?: (step: LiveProcessStep) => void
+  onDone?: (payload: ChatStreamDone) => void
+  onError?: (message: string) => void
+}
+
+function parseSseBlock(block: string): { event: string; data: string } | null {
+  let event = 'message'
+  let data = ''
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event: ')) event = line.slice(7).trim()
+    else if (line.startsWith('data: ')) data += line.slice(6)
+  }
+  if (!data) return null
+  return { event, data }
+}
+
+async function consumeSse(
+  response: Response,
+  handlers: ChatStreamHandlers,
+): Promise<void> {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('无法读取流式响应')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finished = false
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let sep = buffer.indexOf('\n\n')
+    while (sep >= 0) {
+      const raw = buffer.slice(0, sep)
+      buffer = buffer.slice(sep + 2)
+      const parsed = parseSseBlock(raw)
+      if (parsed) {
+        const payload = JSON.parse(parsed.data)
+        switch (parsed.event) {
+          case 'session':
+            handlers.onSession?.(payload.session_id)
+            break
+          case 'delta':
+            handlers.onDelta?.(payload.content ?? '')
+            break
+          case 'step':
+            handlers.onStep?.(payload as LiveProcessStep)
+            break
+          case 'error':
+            handlers.onError?.(payload.message ?? '流式请求失败')
+            break
+          case 'mammoth_done':
+          case 'done':
+            // mammoth_done / done 可能各发一次，只处理一次
+            if (!finished) {
+              finished = true
+              handlers.onDone?.(payload as ChatStreamDone)
+            }
+            break
+          default:
+            break
+        }
+      }
+      sep = buffer.indexOf('\n\n')
+    }
+  }
 }
 
 export interface ChatResponse {
@@ -93,4 +188,28 @@ export const api = {
         selected_skill_system_prompt: selectedSkill?.systemPrompt ?? null,
       }),
     }),
+  chatStream: async (
+    message: string,
+    sessionId: string | undefined,
+    selectedSkill: SelectedSkillHint | undefined,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${BASE}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        session_id: sessionId ?? null,
+        selected_skill_name: selectedSkill?.name ?? null,
+        selected_skill_system_prompt: selectedSkill?.systemPrompt ?? null,
+      }),
+      signal,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || '请求失败')
+    }
+    await consumeSse(res, handlers)
+  },
 }

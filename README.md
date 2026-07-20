@@ -1,66 +1,60 @@
 # 猛犸智能体
 
-本地科研 AI 对话应用，对接 OpenClaw，数据持久化到 PostgreSQL。
+本地科研 AI 对话应用：前端 + FastAPI 后端，对接 OpenClaw，会话落库 PostgreSQL。
 
-## 快速启动
+## 代码位置
+
+```text
+/data2/mammoth-agent
+```
+
+## 快速启停
 
 ```bash
-# 1. 确保 PostgreSQL 和 OpenClaw 已运行
-# 2. 一键启动
-./start.sh
+cd /data2/mammoth-agent
+./scripts/service.sh start     # 后台启动前后端
+./scripts/service.sh status    # 状态
+./scripts/service.sh deps      # OpenClaw / DB / 模型 / Agent 列表
+./scripts/service.sh restart
+./scripts/service.sh stop
 ```
 
 - 前端：http://localhost:5173
-- 后端：http://localhost:8080
-- 数据库：`mammoth_agent` @ `localhost:5434`
+- 后端：http://localhost:8080/api/health
+- 过程日志：`process_logs/{YYYY-MM-DD}/{session_id}.jsonl`（猛犸自写）
 
-## 手动启动
+完整部署、依赖智能体与维护方式见：**[docs/DEPLOY.md](docs/DEPLOY.md)**。
 
-```bash
-# 初始化数据库（首次）
-cd backend && python init_db.py
+## 其它文档
 
-# 后端
-cd backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload
-
-# 前端
-cd frontend && npm run dev
-```
-
-## 数据库
-
-使用独立库 `mammoth_agent`（与 `oakclaw` 主库分离）：
-
-| 表 | 说明 |
-|----|------|
-| `sessions` | 对话会话（id, title, created_at, updated_at） |
-| `messages` | 消息记录（id, session_id, role, content, token 统计） |
-
-```bash
-# 初始化
-cd backend && python init_db.py
-```
-
-## 环境变量
-
-见 `backend/.env`：
-
-```
-OPENCLAW_BASE_URL=http://127.0.0.1:18789
-OPENCLAW_API_KEY=...
-DB_HOST=127.0.0.1
-DB_PORT=5434
-DB_NAME=mammoth_agent
-```
+| 文档 | 说明 |
+|------|------|
+| [docs/DEPLOY.md](docs/DEPLOY.md) | 部署 / 端口 / OpenClaw Agent 维护 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 产品设计 |
+| [docs/process_log_protocol.md](docs/process_log_protocol.md) | 过程日志文件协议 |
+| [docs/process_log_spec.md](docs/process_log_spec.md) | 模型输出规范 |
+| [docs/process_ui_template.md](docs/process_ui_template.md) | 过程 UI 模板 |
 
 ## 项目结构
 
-```
+```text
 mammoth-agent/
-├── huixiang.png          # Logo
-├── skills/skills.yaml    # 15 个技能定义
-├── backend/              # FastAPI 后端
-├── frontend/             # React 前端
-├── docs/DESIGN.md        # 设计文档
-└── start.sh              # 启动脚本
+├── backend/           # FastAPI
+├── frontend/          # React + Vite
+├── skills/            # 技能广场 YAML
+├── data/              # 数据广场 YAML
+├── process_logs/      # 按日过程日志
+├── docs/              # 设计与部署文档
+├── scripts/service.sh # 服务启停脚本
+└── start.sh           # 前台一键启动（开发用）
 ```
+
+## 依赖一览（摘要）
+
+| 服务 | 端口 | 维护 |
+|------|------|------|
+| 猛犸前端/后端 | 5173 / 8080 | `./scripts/service.sh` |
+| OpenClaw Gateway | 18789 | `systemctl --user … openclaw-gateway` |
+| PostgreSQL | 5434 | Docker `postgres` |
+| Qwen 推理 | 8006 | 外部模型服务 |
+| AI4Drug MCP | 8000 | `/data2/AI4Drug`（可选） |
