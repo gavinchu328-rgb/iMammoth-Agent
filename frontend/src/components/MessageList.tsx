@@ -1,7 +1,7 @@
-import { useRef, useEffect } from 'react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { useRef, useEffect, useMemo } from 'react'
 import type { Message } from '../api/client'
+import ProcessPanel from './ProcessPanel'
+import { parseProcessLog } from '../utils/parseProcessLog'
 
 interface Props {
   messages: Message[]
@@ -10,6 +10,11 @@ interface Props {
 
 const COL =
   'mx-auto w-full min-w-0 max-w-2xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+
+function AssistantContent({ content }: { content: string }) {
+  const parsed = useMemo(() => parseProcessLog(content), [content])
+  return <ProcessPanel parsed={parsed} />
+}
 
 export default function MessageList({ messages, loading }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -35,9 +40,7 @@ export default function MessageList({ messages, loading }: Props) {
                   <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
                 </div>
                 <div className="w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 md:px-5 md:py-4">
-                  <div className="assistant-prose">
-                    <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
-                  </div>
+                  <AssistantContent content={msg.content} />
                 </div>
               </div>
             ),

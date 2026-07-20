@@ -119,6 +119,30 @@ def _load_databases() -> list[DatabaseOut]:
     return out
 
 
+def _load_process_log_spec() -> str:
+    path = Path(__file__).parent / settings.process_log_spec_path
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _openclaw_system_messages() -> list[dict]:
+    msgs = [{"role": "system", "content": settings.openclaw_system_prompt}]
+    spec = _load_process_log_spec()
+    if spec:
+        msgs.append(
+            {
+                "role": "system",
+                "content": (
+                    "以下是【过程日志输出规范】。你每次回复用户的最终 message content "
+                    "必须严格遵守该规范（以「## 分析过程」开头，以「## 最终回答」收尾）：\n\n"
+                    f"{spec}"
+                ),
+            }
+        )
+    return msgs
+
+
 def _session_to_out(s: Session) -> SessionOut:
     return SessionOut(
         id=str(s.id),
@@ -265,7 +289,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     db.add(user_msg)
 
     # OpenClaw 的 system 消息会影响技能匹配与工具选择。
-    messages_for_openclaw = [{"role": "system", "content": settings.openclaw_system_prompt}]
+    messages_for_openclaw = _openclaw_system_messages()
 
     if req.selected_skill_system_prompt:
         selected = (req.selected_skill_name or "").strip()

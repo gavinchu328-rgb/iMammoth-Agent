@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     backend_port: int = 8080
     skills_path: str = "../skills/skills.yaml"
     databases_path: str = "../data/databases.yaml"
+    process_log_spec_path: str = "../docs/process_log_spec.md"
 
     @property
     def database_url(self) -> str:
