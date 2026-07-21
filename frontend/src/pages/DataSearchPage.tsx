@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { api, type Database, type DatabaseSearchResponse } from '../api/client'
+import { dataPlazaPath } from '../utils/dataPlaza'
 
 function ResultView({ data }: { data: DatabaseSearchResponse }) {
   if (data.error) {
@@ -15,7 +16,7 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
   const count = r.count as number | undefined
 
   return (
-    <div className="space-y-4 text-sm">
+    <div className="min-w-0 max-w-full space-y-4 overflow-hidden text-sm">
       {typeof count === 'number' && (
         <p className="font-medium text-slate-700">共 {count} 条结果</p>
       )}
@@ -23,11 +24,15 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
       {Array.isArray(r.hits) && r.hits.length > 0 && (
         <div className="space-y-2">
           {(r.hits as Record<string, unknown>[]).map((hit, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="font-medium text-slate-900">{String(hit.name ?? hit.id ?? '')}</div>
-              {hit.id != null && <div className="text-xs text-slate-500">ID: {String(hit.id)}</div>}
+            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-white p-3">
+              <div className="break-words font-medium text-slate-900">
+                {String(hit.name ?? hit.id ?? '')}
+              </div>
+              {hit.id != null && (
+                <div className="break-all text-xs text-slate-500">ID: {String(hit.id)}</div>
+              )}
               {hit.description != null && (
-                <div className="mt-1 text-slate-600">{String(hit.description)}</div>
+                <div className="mt-1 break-words text-slate-600">{String(hit.description)}</div>
               )}
             </div>
           ))}
@@ -35,8 +40,8 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
       )}
 
       {Array.isArray(r.compounds) && r.compounds.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-xs">
+        <div className="max-w-full overflow-x-auto rounded-lg border border-slate-100">
+          <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b text-slate-500">
                 <th className="py-2 pr-3">ChEMBL ID</th>
@@ -53,7 +58,7 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
                   <td className="py-2 pr-3">{String(c.pref_name ?? '')}</td>
                   <td className="py-2 pr-3">{String(c.standard_type ?? '')}</td>
                   <td className="py-2 pr-3">{String(c.pchembl_value ?? '')}</td>
-                  <td className="max-w-[200px] truncate py-2 font-mono text-[11px]">
+                  <td className="max-w-[12rem] break-all py-2 font-mono text-[11px] whitespace-normal">
                     {String(c.canonical_smiles ?? '')}
                   </td>
                 </tr>
@@ -66,7 +71,10 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
       {Array.isArray(r.matches) && r.matches.length > 0 && (
         <div className="space-y-2">
           {(r.matches as Record<string, unknown>[]).map((m, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <div
+              key={i}
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white px-3 py-2 break-words"
+            >
               <span className="font-medium">{String(m.zh)}</span>
               <span className="mx-2 text-slate-400">→</span>
               <span className="text-[#2563EB]">{String(m.en)}</span>
@@ -75,19 +83,139 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
         </div>
       )}
 
+      {Array.isArray(r.papers) && r.papers.length > 0 && (
+        <div className="max-w-full overflow-x-auto rounded-lg border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b text-slate-500">
+                <th className="py-2 pr-3">标题</th>
+                <th className="py-2 pr-3">作者</th>
+                <th className="py-2 pr-3">期刊</th>
+                <th className="py-2 pr-3">年份</th>
+                <th className="py-2">来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(r.papers as Record<string, unknown>[]).map((p, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top">
+                  <td className="max-w-[14rem] break-words py-2 pr-3 whitespace-normal">
+                    {String(p.titleCn ?? p.title ?? '')}
+                  </td>
+                  <td className="max-w-[10rem] break-words py-2 pr-3 whitespace-normal">
+                    {Array.isArray(p.authors)
+                      ? (p.authors as string[]).slice(0, 3).join(', ')
+                      : String(p.authors ?? '')}
+                  </td>
+                  <td className="max-w-[8rem] break-words py-2 pr-3 whitespace-normal">
+                    {String(p.journal ?? '')}
+                  </td>
+                  <td className="py-2 pr-3">{String(p.year ?? '')}</td>
+                  <td className="py-2">{String(p.source ?? '')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {Array.isArray(r.sops) && r.sops.length > 0 && (
+        <div className="max-w-full overflow-x-auto rounded-lg border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b text-slate-500">
+                <th className="py-2 pr-3">标题</th>
+                <th className="py-2 pr-3">领域</th>
+                <th className="py-2 pr-3">步骤</th>
+                <th className="py-2">类型</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(r.sops as Record<string, unknown>[]).map((s, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top">
+                  <td className="max-w-[16rem] break-words py-2 pr-3 whitespace-normal">
+                    {String(s.title ?? '')}
+                  </td>
+                  <td className="py-2 pr-3">{String(s.fieldName ?? s.directionName ?? '')}</td>
+                  <td className="py-2 pr-3">{String(s.stepCount ?? '')}</td>
+                  <td className="py-2">{String(s.sourceType ?? s.kind ?? '')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {Array.isArray(r.domains) && r.domains.length > 0 && (
+        <div className="space-y-2">
+          {(r.domains as Record<string, unknown>[]).map((d, i) => (
+            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-white p-3">
+              <div className="break-words font-medium">{String(d.name ?? '')}</div>
+              {d.description != null && (
+                <div className="mt-1 break-words text-slate-600">{String(d.description)}</div>
+              )}
+              {Array.isArray(d.keywords) && (d.keywords as string[]).length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {(d.keywords as string[]).slice(0, 8).map((kw) => (
+                    <span
+                      key={kw}
+                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
+                    >
+                      {kw}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {Array.isArray(r.reactions) && r.reactions.length > 0 && (
+        <div className="max-w-full overflow-x-auto rounded-lg border border-slate-100">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b text-slate-500">
+                <th className="py-2 pr-3">ID</th>
+                <th className="py-2 pr-3">来源</th>
+                <th className="py-2 pr-3">产率</th>
+                <th className="py-2 pr-3">产物 SMILES</th>
+                <th className="py-2">条件摘要</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(r.reactions as Record<string, unknown>[]).map((rxn, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top">
+                  <td className="py-2 pr-3 font-mono">{String(rxn.id ?? '')}</td>
+                  <td className="py-2 pr-3">{String(rxn.source_db ?? rxn.sourceDb ?? '')}</td>
+                  <td className="py-2 pr-3">{String(rxn.yield ?? rxn.yieldValue ?? '')}</td>
+                  <td className="max-w-[12rem] break-all py-2 pr-3 font-mono text-[11px] whitespace-normal">
+                    {String(rxn.product_smiles ?? rxn.productSmiles ?? '')}
+                  </td>
+                  <td className="max-w-[16rem] break-words py-2 text-[11px] leading-relaxed whitespace-normal text-slate-600">
+                    {String(rxn.conditions ?? '')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {Array.isArray(r.drugs) && r.drugs.length > 0 && (
         <div className="space-y-2">
           {(r.drugs as Record<string, unknown>[]).slice(0, 10).map((d, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="font-medium">{String(d.name ?? '')}</div>
-              <div className="mt-1 truncate font-mono text-xs text-slate-500">{String(d.smiles ?? '')}</div>
+            <div key={i} className="overflow-hidden rounded-lg border border-slate-200 bg-white p-3">
+              <div className="break-words font-medium">{String(d.name ?? '')}</div>
+              <div className="mt-1 break-all font-mono text-xs text-slate-500">
+                {String(d.smiles ?? '')}
+              </div>
             </div>
           ))}
         </div>
       )}
 
       {Array.isArray(r.mappings) && r.mappings.length > 0 && (
-        <div className="space-y-1 font-mono text-xs">
+        <div className="space-y-1 break-all font-mono text-xs">
           {(r.mappings as Record<string, unknown>[]).map((m, i) => (
             <div key={i}>
               {String(m.chembl_id)} ↔ {String(m.uniprot_id)}
@@ -121,14 +249,16 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
       )}
 
       {r.preview != null && (
-        <pre className="overflow-x-auto rounded-lg border bg-slate-50 p-3 text-xs">
+        <pre className="max-w-full overflow-x-auto rounded-lg border bg-slate-50 p-3 text-xs break-words whitespace-pre-wrap">
           {String(r.preview)}
         </pre>
       )}
 
       <details className="text-xs text-slate-500">
         <summary className="cursor-pointer">原始 JSON</summary>
-        <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2">{JSON.stringify(r, null, 2)}</pre>
+        <pre className="mt-2 max-w-full overflow-x-auto rounded bg-slate-50 p-2 break-all whitespace-pre-wrap">
+          {JSON.stringify(r, null, 2)}
+        </pre>
       </details>
     </div>
   )
@@ -137,6 +267,7 @@ function ResultView({ data }: { data: DatabaseSearchResponse }) {
 export default function DataSearchPage() {
   const { databaseId } = useParams<{ databaseId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [db, setDb] = useState<Database | null>(null)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
@@ -169,6 +300,19 @@ export default function DataSearchPage() {
     }
   }
 
+  const handleBack = () => {
+    const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+    if (returnTo) {
+      navigate(returnTo)
+      return
+    }
+    if (db) {
+      navigate(dataPlazaPath(db.project, db.category))
+      return
+    }
+    navigate('/data')
+  }
+
   const handleAskAgent = () => {
     if (!db) return
     const prompt =
@@ -189,10 +333,10 @@ export default function DataSearchPage() {
         <p className="text-red-600">{error}</p>
         <button
           type="button"
-          onClick={() => navigate('/data')}
+          onClick={handleBack}
           className="text-sm text-[#2563EB] hover:underline"
         >
-          返回数据广场
+          返回上一级
         </button>
       </div>
     )
@@ -201,14 +345,14 @@ export default function DataSearchPage() {
   if (!db) return null
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <main className="mx-auto w-full max-w-3xl px-3 py-6 pb-16 md:px-8 md:py-10">
+    <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+      <main className="mx-auto w-full min-w-0 max-w-3xl px-3 py-6 pb-16 md:px-8 md:py-10">
         <button
           type="button"
-          onClick={() => navigate('/data')}
+          onClick={handleBack}
           className="mb-4 text-sm text-[#2563EB] hover:underline"
         >
-          ← 返回数据广场
+          ← 返回上一级
         </button>
 
         <div className="mb-6 rounded-[20px] border border-[#E5E5E5] bg-white p-5 md:p-6">
@@ -227,6 +371,16 @@ export default function DataSearchPage() {
             <span className="font-medium text-slate-600">数据量：</span>
             <span className="font-bold text-slate-900">{db.volume}</span>
           </p>
+          {db.storage_path && (
+            <p className="mt-2 break-all font-mono text-[11px] text-slate-500">
+              文件：{db.storage_path}
+            </p>
+          )}
+          {db.service_endpoint && (
+            <p className="mt-1 break-all font-mono text-[11px] text-slate-500">
+              服务：{db.service_endpoint}
+            </p>
+          )}
         </div>
 
         <div className="rounded-[20px] border border-[#E5E5E5] bg-[radial-gradient(60%_60%_at_100%_100%,_#E1EAFF_0%,_#FFFFFF_100%)] p-5 md:p-6">
@@ -270,7 +424,7 @@ export default function DataSearchPage() {
         )}
 
         {result && (
-          <div className="mt-6 rounded-[20px] border border-slate-200 bg-white p-5 md:p-6">
+          <div className="mt-6 min-w-0 overflow-hidden rounded-[20px] border border-slate-200 bg-white p-5 md:p-6">
             <h2 className="mb-4 text-base font-bold text-slate-900">查询结果</h2>
             <ResultView data={result} />
             {!result.searchable && result.chat_prompt && (

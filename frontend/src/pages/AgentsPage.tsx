@@ -4,7 +4,8 @@ import type { CSSProperties } from 'react'
 
 const AI4DRUG_AGENT_PAGE = 'http://192.168.11.209:8888/ai4drug-pipeline.html'
 const HUAXUE_AGENT_PAGE = 'http://192.168.11.209:3011/'
-const DOMAIN_LEARNING_AGENT_PAGE = 'http://192.168.11.209:8866/'
+const DOMAIN_LEARNING_DIRECT_PAGE = 'http://192.168.11.209:8866/'
+const DOE_AGENT_PAGE = 'http://192.168.9.116:5173/'
 
 type AgentCard = {
   id: string
@@ -46,7 +47,16 @@ export default function AgentsPage() {
         icon: '📚',
         description: '领域知识学习与问答智能体（文献 / 协议 / 专业知识）',
         detailPath: '/agents/domainlearning',
-        externalUrl: DOMAIN_LEARNING_AGENT_PAGE,
+        externalUrl: DOMAIN_LEARNING_DIRECT_PAGE,
+      },
+      {
+        id: 'doe',
+        name: 'DOE 实验设计智能体',
+        category: '实验设计',
+        icon: '🧬',
+        description: '贝叶斯优化与实验设计（DOE+ 多轮规划 / 实验条件建议 / 结果管理）',
+        detailPath: '/agents/doe',
+        externalUrl: DOE_AGENT_PAGE,
       },
       {
         id: 'coming-soon-1',

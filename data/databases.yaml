@@ -310,12 +310,14 @@ databases:
   searchable: true
   project: 物质科学
 - id: unified-reactions-duckdb
-  name: 统一反应库
+  name: 化学反应库
   category: 化学反应
   icon: ⚗️
-  description: 物质科学反应知识库主库，合并 Pistachio / Woshi / USPTO / ORD 四大来源，经 reaction-db-api 提供检索。
+  description: 物质科学反应知识库主库（unified_reactions.duckdb），合并 Pistachio / Woshi / USPTO / ORD 四大来源；支持关键词检索反应 SMILES、条件与专利号。
   volume: 约 2928 万条反应 · 23 GB
   source_type: local
+  storage_path: /data1/huixiang_db/unified_reactions.duckdb
+  service_endpoint: http://127.0.0.1:9306/api/rxn/search
   example_query: aspirin
   searchable: true
   project: 物质科学
@@ -549,3 +551,107 @@ databases:
   example_query: aspirin
   searchable: false
   project: 物质科学
+# --- 领域学习智能体（/data1/Domainlearning）---
+- id: dl-literature-library
+  name: 领域文献库
+  category: 文献
+  icon: 📚
+  description: oakclaw PostgreSQL 文献主库（papers 表），含批量导入与实时检索入库的论文；支持标题、作者、摘要、关键词模糊检索。
+  volume: 约 36 万篇
+  source_type: local
+  storage_path: postgresql://192.168.11.209:5434/oakclaw
+  service_endpoint: http://127.0.0.1:18880/api/v1/literature/library
+  example_query: CRISPR
+  searchable: true
+  project: 领域学习
+- id: dl-literature-external
+  name: 外部文献检索
+  category: 文献
+  icon: 🌐
+  description: 实时调用 PubMed、Semantic Scholar、bioRxiv、Crossref 检索并合并入库；检索耗时较长（约 30–90 秒）。
+  volume: 在线 API（四大来源）
+  source_type: online
+  service_endpoint: http://127.0.0.1:18880/api/v1/literature/search
+  example_query: machine learning drug discovery
+  searchable: true
+  project: 领域学习
+- id: dl-sop-library
+  name: 实验 SOP 库
+  category: 实验协议
+  icon: 🧫
+  description: 论文提取 SOP 与 Bio-protocol SOP 统一检索（paper_sops + sops 表），按标题与关键词匹配。
+  volume: 约 4161 条 SOP
+  source_type: local
+  storage_path: postgresql://192.168.11.209:5434/oakclaw
+  service_endpoint: http://127.0.0.1:18880/api/v1/sops/search
+  example_query: ELISA
+  searchable: true
+  project: 领域学习
+- id: dl-bio-protocol-sops
+  name: Bio-protocol SOP
+  category: 实验协议
+  icon: 📋
+  description: Bio-protocol 中文 SOP 数据集（Bio-protocol-CN-new.json 导入），含步骤、设备、试剂与 DOI。
+  volume: 约 4159 条
+  source_type: local
+  storage_path: /data1/Domainlearning/Bio-protocol-CN-new.json
+  service_endpoint: http://127.0.0.1:18880/api/v1/bio-sops
+  example_query: PCR
+  searchable: true
+  project: 领域学习
+- id: dl-research-domains
+  name: 研究领域目录
+  category: 领域元数据
+  icon: 🏷️
+  description: 研究领域（domains 表）及关键词配置，关联文献库、定时任务与 MinIO 分桶。
+  volume: 十余个活跃领域
+  source_type: local
+  storage_path: postgresql://192.168.11.209:5434/oakclaw
+  service_endpoint: http://127.0.0.1:18880/api/v1/fields
+  example_query: 药物
+  searchable: true
+  project: 领域学习
+- id: dl-papers-csv-batch
+  name: 批量导入文献集
+  category: 文献
+  icon: 📥
+  description: 五套离线 CSV 批量导入（实验室自动化、AI 药物、化学合成、材料科学、蛋白质结构），已写入领域文献库。
+  volume: 约 67 万条原始记录 · 332 MB
+  source_type: local
+  storage_path: /data1/Domainlearning/papers/
+  example_query: AI 药物研发
+  searchable: false
+  project: 领域学习
+- id: dl-minio-literature-pdfs
+  name: MinIO 文献 PDF
+  category: 对象存储
+  icon: 📄
+  description: 按研究领域分桶存储的 PDF 原文与上传附件（MinIO S3 兼容对象存储）。
+  volume: 运行时动态增长
+  source_type: local
+  storage_path: 192.168.11.209:9092
+  example_query: ai-drug-discovery
+  searchable: false
+  project: 领域学习
+- id: dl-vault-knowledge-base
+  name: Vault 向量知识库
+  category: 知识库
+  icon: 🧠
+  description: 外部 Vault KB 向量索引服务，支撑领域文献语义问答与 wiki 生成。
+  volume: 在线 API
+  source_type: online
+  service_endpoint: http://127.0.0.1:3001
+  example_query: 总结当前领域主要研究方向
+  searchable: false
+  project: 领域学习
+- id: dl-oakclaw-postgres
+  name: oakclaw 领域学习库
+  category: 平台基础设施
+  icon: 🗄️
+  description: 领域学习主业务 PostgreSQL（domains、papers、SOP、定时任务、知识库映射、对话历史等 26+ 表）。
+  volume: 运行时动态增长
+  source_type: local
+  storage_path: postgresql://192.168.11.209:5434/oakclaw
+  example_query: papers
+  searchable: false
+  project: 领域学习

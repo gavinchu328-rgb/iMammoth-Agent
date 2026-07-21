@@ -96,6 +96,13 @@ skills:
     description: "分子性质、Lipinski、指纹、DFT、ADMET 等本地化学计算（chemistry-calc）"
     example: "咖啡因的口服生物利用度怎么样？它的极性表面积是多少？"
 
+  - id: chemical_reaction
+    name: "化学智能中心"
+    category: "化学信息学"
+    icon: "🔬"
+    description: "huaxue AI 智能中心：性质预测、虚拟筛选、分子生成、反应预测、逆合成与催化剂推荐"
+    example: "帮我预测乙醇与苯的反应产物，并给出阿司匹林的逆合成路线"
+
   - id: exp_design
     name: "智能实验设计"
     category: "实验设计"

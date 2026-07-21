@@ -26,8 +26,13 @@ PUBCHEM_SDF = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{smiles
 HUAXUE_COMPOUNDS_API = "http://127.0.0.1:3010/api/compounds"
 HUAXUE_LIBRARIES_API = "http://127.0.0.1:3010/api/molecular-libraries"
 REACTION_API = "http://127.0.0.1:9306/api/rxn/search"
+UNIFIED_REACTIONS_DB = Path("/data1/huixiang_db/unified_reactions.duckdb")
+UNIFIED_REACTIONS_TABLE = "unified_reactions"
 COMPOUNDS_SEED = Path("/data1/huaxue/shared/static/compounds_seed.json")
 DFT_DESCRIPTORS_CSV = Path("/data1/huixiang_db/descriptors.csv")
+
+DOMAINLEARNING_API = "http://127.0.0.1:18880/api/v1"
+DOMAINLEARNING_BIO_PROTOCOL_JSON = Path("/data1/Domainlearning/Bio-protocol-CN-new.json")
 
 SOURCE_DB_MAP = {
     "reaction-pistachio": "pistachio",
@@ -284,15 +289,7 @@ def search_molecular_libraries(query: str) -> dict[str, Any]:
     return {"query": query, "count": len(matches), "hits": matches, "libraries": matches}
 
 
-def search_reactions(query: str, *, source_db: str | None = None, limit: int = 10) -> dict[str, Any]:
-    params: dict[str, Any] = {"keyword": query.strip(), "pageSize": limit, "page": 1}
-    if source_db:
-        params["sourceDb"] = source_db
-    url = f"{REACTION_API}?{urllib.parse.urlencode(params)}"
-    data = _http_get_json(url, timeout=60)
-    if not isinstance(data, dict):
-        return {"query": query, "count": 0, "hits": []}
-    items = data.get("items") or []
+def _format_reaction_hits(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     hits = []
     for item in items:
         if not isinstance(item, dict):
@@ -300,25 +297,113 @@ def search_reactions(query: str, *, source_db: str | None = None, limit: int = 1
         hits.append(
             {
                 "id": item.get("id") or item.get("sourceId"),
-                "name": item.get("canonicalRxn") or item.get("productSmiles"),
+                "name": item.get("canonicalRxn") or item.get("canonical_rxn") or item.get("productSmiles") or item.get("product_smiles"),
                 "description": " | ".join(
                     str(x)
                     for x in [
-                        f"来源={item.get('sourceDb')}",
-                        f"产率={item.get('yieldValue')}",
+                        f"来源={item.get('sourceDb') or item.get('source_db')}",
+                        f"产率={item.get('yieldValue') or item.get('yield')}",
                         (item.get("conditions") or "")[:120],
                     ]
                     if x is not None and str(x)
                 ),
             }
         )
+    return hits
+
+
+def search_unified_reactions_duckdb(
+    query: str,
+    *,
+    source_db: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not UNIFIED_REACTIONS_DB.is_file():
+        raise FileNotFoundError(f"Unified reactions DuckDB not found: {UNIFIED_REACTIONS_DB}")
+
+    import duckdb
+
+    kw = query.strip()
+    if not kw:
+        return {"query": query, "count": 0, "hits": [], "reactions": [], "source_db": source_db}
+
+    like = f"%{kw}%"
+    where = [
+        "("
+        "product_smiles ILIKE ? OR "
+        "reactants_smiles ILIKE ? OR "
+        "canonical_rxn ILIKE ? OR "
+        "COALESCE(conditions, '') ILIKE ? OR "
+        "COALESCE(catalysts_smiles, '') ILIKE ?"
+        ")"
+    ]
+    params: list[Any] = [like, like, like, like, like]
+    if source_db:
+        where.append("source_db = ?")
+        params.append(source_db)
+
+    sql = f"""
+        SELECT id, source_db, canonical_rxn, product_smiles, yield, conditions
+        FROM {UNIFIED_REACTIONS_TABLE}
+        WHERE {' AND '.join(where)}
+        LIMIT ?
+    """
+    params.append(limit)
+
+    con = duckdb.connect(str(UNIFIED_REACTIONS_DB), read_only=True)
+    try:
+        rows = con.execute(sql, params).fetchall()
+        cols = ["id", "source_db", "canonical_rxn", "product_smiles", "yield", "conditions"]
+        items = [dict(zip(cols, row)) for row in rows]
+    finally:
+        con.close()
+
+    hits = _format_reaction_hits(
+        [
+            {
+                "id": item["id"],
+                "sourceDb": item.get("source_db"),
+                "canonicalRxn": item.get("canonical_rxn"),
+                "productSmiles": item.get("product_smiles"),
+                "yieldValue": item.get("yield"),
+                "conditions": item.get("conditions"),
+            }
+            for item in items
+        ]
+    )
     return {
         "query": query,
-        "count": data.get("total", len(hits)),
+        "count": len(hits),
         "hits": hits,
         "reactions": items,
         "source_db": source_db,
+        "backend": "duckdb",
+        "storage_path": str(UNIFIED_REACTIONS_DB),
     }
+
+
+def search_reactions(query: str, *, source_db: str | None = None, limit: int = 10) -> dict[str, Any]:
+    params: dict[str, Any] = {"keyword": query.strip(), "pageSize": limit, "page": 1}
+    if source_db:
+        params["sourceDb"] = source_db
+    url = f"{REACTION_API}?{urllib.parse.urlencode(params)}"
+    try:
+        data = _http_get_json(url, timeout=120)
+        if not isinstance(data, dict):
+            return search_unified_reactions_duckdb(query, source_db=source_db, limit=limit)
+        items = data.get("items") or []
+        hits = _format_reaction_hits(items)
+        return {
+            "query": query,
+            "count": data.get("total", len(hits)),
+            "hits": hits,
+            "reactions": items,
+            "source_db": source_db,
+            "backend": "reaction-db-api",
+            "storage_path": str(UNIFIED_REACTIONS_DB),
+        }
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return search_unified_reactions_duckdb(query, source_db=source_db, limit=limit)
 
 
 def search_compounds_seed(query: str, *, limit: int = 20) -> dict[str, Any]:
@@ -377,6 +462,187 @@ def search_dft_descriptors(query: str, *, limit: int = 20) -> dict[str, Any]:
     return {"query": query, "count": len(matches), "hits": matches}
 
 
+def _format_literature_hits(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        authors = item.get("authors") or []
+        author_str = ", ".join(str(a) for a in authors[:3])
+        if len(authors) > 3:
+            author_str += " 等"
+        hits.append(
+            {
+                "name": item.get("titleCn") or item.get("title") or "",
+                "id": item.get("doi") or item.get("id"),
+                "description": " | ".join(
+                    str(x)
+                    for x in [
+                        f"作者: {author_str}" if author_str else None,
+                        f"期刊: {item.get('journal')}" if item.get("journal") else None,
+                        str(item.get("year")) if item.get("year") else None,
+                        f"来源: {item.get('source')}" if item.get("source") else None,
+                    ]
+                    if x
+                ),
+            }
+        )
+    return hits
+
+
+def _format_sop_hits(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        hits.append(
+            {
+                "name": item.get("title") or "",
+                "id": item.get("id"),
+                "description": " | ".join(
+                    str(x)
+                    for x in [
+                        item.get("fieldName") or item.get("directionName"),
+                        f"{item.get('stepCount', 0)} 步",
+                        item.get("sourceType") or item.get("kind"),
+                    ]
+                    if x
+                ),
+            }
+        )
+    return hits
+
+
+def _format_domain_hits(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        keywords = item.get("keywords") or []
+        kw_preview = ", ".join(str(k) for k in keywords[:6])
+        hits.append(
+            {
+                "name": item.get("name") or "",
+                "id": item.get("id"),
+                "description": " | ".join(
+                    str(x)
+                    for x in [
+                        (item.get("description") or "")[:160],
+                        f"关键词: {kw_preview}" if kw_preview else None,
+                    ]
+                    if x
+                ),
+            }
+        )
+    return hits
+
+
+def search_dl_literature_library(query: str, *, limit: int = 10) -> dict[str, Any]:
+    params = urllib.parse.urlencode({"q": query.strip(), "pageSize": limit, "page": 1})
+    data = _http_get_json(f"{DOMAINLEARNING_API}/literature/library?{params}", timeout=30)
+    items = data.get("items") or [] if isinstance(data, dict) else []
+    hits = _format_literature_hits(items)
+    total = data.get("total", len(hits)) if isinstance(data, dict) else len(hits)
+    return {
+        "query": query,
+        "count": total,
+        "hits": hits,
+        "papers": items,
+        "service_endpoint": f"{DOMAINLEARNING_API}/literature/library",
+    }
+
+
+def search_dl_literature_external(query: str, *, limit: int = 10) -> dict[str, Any]:
+    params = urllib.parse.urlencode(
+        {
+            "q": query.strip(),
+            "pageSize": limit,
+            "page": 1,
+            "live": "true",
+            "maxResults": limit,
+        }
+    )
+    data = _http_get_json(f"{DOMAINLEARNING_API}/literature/search?{params}", timeout=90)
+    items = data.get("items") or [] if isinstance(data, dict) else []
+    hits = _format_literature_hits(items)
+    total = data.get("total", len(hits)) if isinstance(data, dict) else len(hits)
+    return {
+        "query": query,
+        "count": total,
+        "hits": hits,
+        "papers": items,
+        "service_endpoint": f"{DOMAINLEARNING_API}/literature/search",
+        "sources": ["PubMed", "Semantic Scholar", "bioRxiv", "Crossref"],
+    }
+
+
+def search_dl_sops(query: str, *, limit: int = 10) -> dict[str, Any]:
+    params = urllib.parse.urlencode({"q": query.strip(), "limit": min(limit, 10)})
+    data = _http_get_json(f"{DOMAINLEARNING_API}/sops/search?{params}", timeout=30)
+    items = data.get("items") or [] if isinstance(data, dict) else []
+    hits = _format_sop_hits(items)
+    return {
+        "query": query,
+        "count": len(hits),
+        "hits": hits,
+        "sops": items,
+        "service_endpoint": f"{DOMAINLEARNING_API}/sops/search",
+    }
+
+
+def search_dl_bio_protocol_sops(query: str, *, limit: int = 20) -> dict[str, Any]:
+    data = _http_get_json(f"{DOMAINLEARNING_API}/bio-sops", timeout=60)
+    items = data.get("items") or [] if isinstance(data, dict) else []
+    q = query.strip().lower()
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        blob = " ".join(
+            str(item.get(k) or "")
+            for k in ("title", "directionName", "doi", "source")
+        ).lower()
+        if q in blob:
+            matches.append(item)
+        if len(matches) >= limit:
+            break
+    hits = _format_sop_hits(matches)
+    return {
+        "query": query,
+        "count": len(matches),
+        "hits": hits,
+        "sops": matches,
+        "storage_path": str(DOMAINLEARNING_BIO_PROTOCOL_JSON),
+        "service_endpoint": f"{DOMAINLEARNING_API}/bio-sops",
+    }
+
+
+def search_dl_research_domains(query: str, *, limit: int = 20) -> dict[str, Any]:
+    data = _http_get_json(f"{DOMAINLEARNING_API}/fields", timeout=20)
+    items = data.get("items") or [] if isinstance(data, dict) else []
+    q = query.strip().lower()
+    matches: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        blob = " ".join(
+            [str(item.get("name") or ""), str(item.get("description") or "")]
+            + [str(k) for k in (item.get("keywords") or [])]
+        ).lower()
+        if not q or q in blob:
+            matches.append(item)
+        if len(matches) >= limit:
+            break
+    hits = _format_domain_hits(matches)
+    return {
+        "query": query,
+        "count": len(matches),
+        "hits": hits,
+        "domains": matches,
+        "service_endpoint": f"{DOMAINLEARNING_API}/fields",
+    }
+
+
 SEARCH_HANDLERS: dict[str, Any] = {
     "open-targets-platform": search_open_targets,
     "chembl-37-sqlite": search_chembl,
@@ -400,6 +666,12 @@ SEARCH_HANDLERS: dict[str, Any] = {
     "reaction-ord": lambda q: search_reactions(q, source_db="ord"),
     "compounds-seed-json": search_compounds_seed,
     "dft-descriptors-csv": search_dft_descriptors,
+    # 领域学习
+    "dl-literature-library": search_dl_literature_library,
+    "dl-literature-external": search_dl_literature_external,
+    "dl-sop-library": search_dl_sops,
+    "dl-bio-protocol-sops": search_dl_bio_protocol_sops,
+    "dl-research-domains": search_dl_research_domains,
 }
 
 

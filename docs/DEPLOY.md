@@ -64,10 +64,14 @@
 ```bash
 cd /data2/mammoth-agent
 
-# 启动前后端（后台）
+# 启动前后端（后台，默认开发模式 HMR）
 ./scripts/service.sh start
 
-# 查看状态
+# 生产模式：先 build，再用 vite preview 提供静态页（无 HMR）
+./scripts/service.sh build
+MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh start
+
+# 查看状态（含 API 延迟、前端 shell 是否可用）
 ./scripts/service.sh status
 
 # 重启 / 停止
@@ -81,7 +85,8 @@ cd /data2/mammoth-agent
 访问：
 
 - 前端：http://\<host\>:5173
-- 后端健康：http://\<host\>:8080/api/health
+- 后端健康（轻量）：http://\<host\>:8080/api/health
+- 后端深度探针：http://\<host\>:8080/api/health/deep
 
 日志：
 
@@ -89,6 +94,21 @@ cd /data2/mammoth-agent
 - 前端：`/tmp/mammoth-frontend.log`
 
 兼容旧入口：`./start.sh`（前台同时起前后端，Ctrl+C 停止）。
+
+### 3.1 开发 vs 生产前端
+
+| 模式 | 环境变量 | 命令 | 说明 |
+|------|----------|------|------|
+| **开发**（默认） | `MAMMOTH_FRONTEND_MODE=dev` | `npm run dev` | 热更新 HMR，改代码方便；偶发白屏属正常现象 |
+| **生产** | `MAMMOTH_FRONTEND_MODE=prod` | `npm run build` + `vite preview` | 静态构建，稳定，适合长期对外提供 |
+
+```bash
+# 仅构建
+./scripts/service.sh build
+
+# 以生产模式启动（会自动 build，源码有变更时重建）
+MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh restart
+```
 
 ---
 
@@ -117,13 +137,38 @@ nohup uvicorn main:app --host 0.0.0.0 --port 8080 > /tmp/mammoth-backend.log 2>&
 
 ### 4.3 前端
 
+**开发模式（默认）**
+
 ```bash
 cd /data2/mammoth-agent/frontend
 npm install          # 首次
 nohup npm run dev -- --host 0.0.0.0 --port 5173 > /tmp/mammoth-frontend.log 2>&1 &
 ```
 
-Vite 已把 `/api` 代理到 `127.0.0.1:8080`。
+**生产模式**
+
+```bash
+cd /data2/mammoth-agent/frontend
+npm install
+npm run build
+nohup npm run preview -- --host 0.0.0.0 --port 5173 > /tmp/mammoth-frontend.log 2>&1 &
+```
+
+Vite 已把 `/api` 代理到 `127.0.0.1:8080`（dev 与 preview 均生效）。
+
+### 4.4 技能广场与 OpenClaw Skill 映射
+
+技能广场数据来自 `skills/skills.yaml`，由后端 `GET /api/skills` 提供。点击卡片会将 `example` 填入对话并附带技能提示，由 OpenClaw 调度对应 skill。
+
+| 广场名称 | skills.yaml `id` | OpenClaw Skill 路径 |
+|----------|------------------|---------------------|
+| 化学计算 | `chemistry-calculation` | `~/.openclaw/workspace/skills/chemistry-calculation/` |
+| **化学智能中心** | `chemical_reaction` | `~/.openclaw/workspace/skills/chemical_reaction/SKILL.md` |
+| 智能实验设计 | `exp_design` | workspace skills（同名目录） |
+
+**化学智能中心**（`chemical_reaction`）对接 huaxue Nest `:3010` AI 中心，覆盖性质预测、虚拟筛选、分子生成、反应预测、逆合成、催化剂预测等；代码根目录 `/data1/huaxue`。
+
+新增技能：在 `skills/skills.yaml` 增加条目（`id` 建议与 OpenClaw skill 名一致），确保 OpenClaw workspace 中已安装对应 `SKILL.md`，刷新前端即可在 `/skills` 看到。
 
 ---
 
@@ -149,6 +194,30 @@ Workspace：`/home/dbcloud/.openclaw/workspace/`（含 `AGENTS.md` / `SOUL.md` /
 | monitor | `workspace-monitor` | 监控 |
 | intern-s2-preview | `workspace-intern-s2-preview` | Intern-S2 模型 |
 | domainlearning | `workspace-domainlearning` | Domainlearning MCP |
+
+### 5.0 智能体广场（外链服务）
+
+智能体广场（`/agents`）除 OpenClaw 对话外，还嵌入独立部署的外部 Web 应用（iframe）。配置见 `frontend/src/pages/AgentsPage.tsx` 与 `AgentDetailPage.tsx`。
+
+| 展示名称 | ID | 前端地址 | 代码位置 | 宿主机 |
+|----------|-----|----------|----------|--------|
+| 药物研发智能体 | `ai4drug` | http://192.168.11.209:8888/ai4drug-pipeline.html | （现网 AI4Drug 管线页） | 192.168.11.209 |
+| 物质科学智能体 | `huaxue` | http://192.168.11.209:3011/ | `/data1/huaxue` 等 | 192.168.11.209 |
+| 领域学习智能体 | `domainlearning` | 广场内 `/domainlearning-embed.html`（经猛犸代理）；直连 `http://192.168.11.209:8866/` | `/data1/Domainlearning` | 192.168.11.209 |
+| **DOE 实验设计智能体** | `doe` | http://192.168.9.116:5173/ | `/home/admin/AIProject/DOEAgent` | **192.168.9.116** |
+
+**DOE 实验设计智能体**（Design of Experiments）提供 DOE+ 贝叶斯优化：创建实验、多轮条件建议、结果记录与可视化。技术栈为 FastAPI + SQLite 后端、React 前端。
+
+```bash
+# 健康检查（从猛犸宿主机或同网段）
+curl -s -o /dev/null -w '%{http_code}\n' http://192.168.9.116:5173/
+
+# SSH 登录宿主机后维护（账号由运维保管，勿写入仓库）
+ssh admin@192.168.9.116
+cd /home/admin/AIProject/DOEAgent
+```
+
+接入新外链智能体：在 `AgentsPage.tsx` 增加卡片，在 `AgentDetailPage.tsx` 的 `AGENTS` 增加同名 `id`，并更新本表。
 
 ### 5.1 OpenClaw Gateway 启停
 
@@ -225,25 +294,49 @@ curl -s http://127.0.0.1:8000/health || curl -s -o /dev/null -w '%{http_code}\n'
 /data1/huaxue/bin/chemistry-calc --help
 ```
 
+### 6.5 物质科学数据（huixiang_db）
+
+| 数据 | 路径 | 检索方式 |
+|------|------|----------|
+| **化学反应库** | `/data1/huixiang_db/unified_reactions.duckdb` | 数据广场 `unified-reactions-duckdb`；或 `reaction-db-api` `:9306` |
+| 分子参考库 | `/data1/huixiang_db/molecules.duckdb` | 数据广场登记（部分表待接入 Web 检索） |
+| DFT 描述符 | `/data1/huixiang_db/descriptors.csv` | 数据广场 `dft-descriptors-csv` |
+
+```bash
+# 反应检索 API（读取 unified_reactions.duckdb）
+curl -s 'http://127.0.0.1:9306/api/rxn/search?keyword=aspirin&pageSize=3'
+
+# 猛犸数据广场代理
+curl -s -X POST http://127.0.0.1:8080/api/databases/unified-reactions-duckdb/search \
+  -H 'Content-Type: application/json' -d '{"query":"aspirin"}'
+```
+
 ---
 
 ## 7. 健康检查清单
 
 ```bash
-./scripts/service.sh status
+./scripts/service.sh status    # 推荐：含 /api/sessions 延迟与前端 shell
 ./scripts/service.sh deps
 
+# 轻量（不打 OpenClaw LLM，毫秒级）
 curl -s http://127.0.0.1:8080/api/health
-# 期望含 "openclaw": true, "database": true
+
+# 深度（含 OpenClaw gateway / DB）
+curl -s http://127.0.0.1:8080/api/health/deep
 ```
 
 | 检查项 | 期望 |
 |--------|------|
-| 前端 5173 | HTTP 200 |
-| 后端 8080 `/api/health` | `status=ok`，openclaw/database 为 true |
+| 前端 5173 `/` | HTTP 200，且 HTML 含 `id="root"` |
+| `/api/sessions`（经 5173 代理） | HTTP 200，通常 < 3s |
+| 后端 `/api/health` | `status=ok`，`database=true`（快速） |
+| 后端 `/api/health/deep` | 另含 `openclaw=true` |
 | OpenClaw 18789 | 可连 |
 | Postgres 5434 | 可连 |
 | Qwen 8006 | `/v1/models` 可访问 |
+
+> **注意**：仅 `curl :5173/` 返回 200 不代表页面可用；若 `/api/sessions` 超时或前端 shell 异常，浏览器仍会白屏或一直加载。
 
 ---
 

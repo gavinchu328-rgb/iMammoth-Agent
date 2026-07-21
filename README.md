@@ -12,15 +12,17 @@
 
 ```bash
 cd /data2/mammoth-agent
-./scripts/service.sh start     # 后台启动前后端
-./scripts/service.sh status    # 状态
+./scripts/service.sh start     # 后台启动前后端（开发模式）
+./scripts/service.sh status    # 状态（含 API 延迟）
 ./scripts/service.sh deps      # OpenClaw / DB / 模型 / Agent 列表
+./scripts/service.sh build     # 构建生产前端
+MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh start  # 生产模式（无 HMR）
 ./scripts/service.sh restart
 ./scripts/service.sh stop
 ```
 
 - 前端：http://localhost:5173
-- 后端：http://localhost:8080/api/health
+- 后端：http://localhost:8080/api/health（轻量）/ `/api/health/deep`（含 OpenClaw）
 - 过程日志：`process_logs/{YYYY-MM-DD}/{session_id}.jsonl`（猛犸自写）
 
 完整部署、依赖智能体与维护方式见：**[docs/DEPLOY.md](docs/DEPLOY.md)**。
@@ -58,3 +60,4 @@ mammoth-agent/
 | PostgreSQL | 5434 | Docker `postgres` |
 | Qwen 推理 | 8006 | 外部模型服务 |
 | AI4Drug MCP | 8000 | `/data2/AI4Drug`（可选） |
+| DOE 实验设计智能体 | 5173 @ 192.168.9.116 | `/home/admin/AIProject/DOEAgent`（外链，智能体广场） |

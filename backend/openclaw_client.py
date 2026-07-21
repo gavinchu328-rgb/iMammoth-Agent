@@ -94,20 +94,12 @@ async def chat_completion_stream(
             raise OpenClawError(f"OpenClaw 请求失败: {e}") from e
 
 
-async def health_check() -> bool:
-    url = f"{settings.openclaw_base_url}/v1/chat/completions"
+async def ping_openclaw() -> bool:
+    """Lightweight OpenClaw reachability check (no LLM call)."""
+    url = f"{settings.openclaw_base_url}/v1/models"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                url,
-                headers=_openclaw_headers(),
-                json={
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "model": settings.openclaw_model,
-                    "user": _openclaw_user_id(None),
-                    "stream": False,
-                },
-            )
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(url, headers=_openclaw_headers())
             return resp.status_code == 200
     except httpx.HTTPError:
         return False

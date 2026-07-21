@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Database } from '../api/client'
+import { dataPlazaPath } from '../utils/dataPlaza'
 
 export default function DataPlazaPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [databases, setDatabases] = useState<Database[]>([])
-  const [project, setProject] = useState('全部')
-  const [active, setActive] = useState('全部')
 
   useEffect(() => {
     api.databases().then(setDatabases).catch(console.error)
@@ -17,6 +17,11 @@ export default function DataPlazaPage() {
     [databases],
   )
 
+  const projectParam = searchParams.get('project')
+  const categoryParam = searchParams.get('category')
+  const project =
+    projectParam && projects.includes(projectParam) ? projectParam : '全部'
+
   const byProject =
     project === '全部' ? databases : databases.filter((d) => (d.project || '药物研发') === project)
 
@@ -25,7 +30,25 @@ export default function DataPlazaPage() {
     [byProject],
   )
 
+  const active =
+    categoryParam && categories.includes(categoryParam) ? categoryParam : '全部'
+
   const filtered = active === '全部' ? byProject : byProject.filter((d) => d.category === active)
+
+  const setProject = (p: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (p === '全部') next.delete('project')
+    else next.set('project', p)
+    next.delete('category')
+    setSearchParams(next, { replace: true })
+  }
+
+  const setActive = (cat: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (cat === '全部') next.delete('category')
+    else next.set('category', cat)
+    setSearchParams(next, { replace: true })
+  }
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -46,7 +69,6 @@ export default function DataPlazaPage() {
                 type="button"
                 onClick={() => {
                   setProject(p)
-                  setActive('全部')
                 }}
                 className={`rounded-full px-3 py-1.5 text-sm transition select-none ${
                   isActive
@@ -83,7 +105,11 @@ export default function DataPlazaPage() {
             <button
               key={db.id}
               type="button"
-              onClick={() => navigate(`/data/${db.id}`)}
+              onClick={() =>
+                navigate(`/data/${db.id}`, {
+                  state: { returnTo: dataPlazaPath(project, active) },
+                })
+              }
               className="group flex h-full cursor-pointer flex-col items-start gap-3 rounded-[20px] border border-[#E5E5E5] bg-[radial-gradient(60%_60%_at_100%_100%,_#E1EAFF_0%,_#FFFFFF_100%)] p-4 text-left transition-all duration-300 hover:border-slate-200 hover:shadow-md active:scale-[1.02] md:p-5"
             >
               <div className="flex items-center gap-2">

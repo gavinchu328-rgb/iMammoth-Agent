@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,7 +18,7 @@ from config import settings
 from database import engine, get_db
 from data_search import run_search
 from models import Base, Message, Session
-from openclaw_client import OpenClawError, chat_completion, chat_completion_stream, health_check
+from openclaw_client import OpenClawError, chat_completion, chat_completion_stream, ping_openclaw
 from openclaw_session_watch import wait_for_session_jsonl, watch_session_jsonl
 from process_log_store import (
     PROCESS_LOG_DONE_TAG,
@@ -98,6 +98,8 @@ class DatabaseOut(BaseModel):
     example_query: str
     searchable: bool
     project: str = "药物研发"
+    storage_path: str | None = None
+    service_endpoint: str | None = None
 
 
 class DatabaseSearchRequest(BaseModel):
@@ -218,10 +220,37 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def _db_ping() -> bool:
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/api/health")
 async def api_health():
-    ok = await health_check()
-    return {"status": "ok" if ok else "degraded", "openclaw": ok, "database": True}
+    """Fast liveness probe: backend + database only (no OpenClaw LLM call)."""
+    db_ok = await _db_ping()
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "backend": True,
+        "database": db_ok,
+    }
+
+
+@app.get("/api/health/deep")
+async def api_health_deep():
+    """Dependency probe for ops scripts (OpenClaw gateway, DB)."""
+    db_ok, openclaw_ok = await asyncio.gather(_db_ping(), ping_openclaw())
+    ok = db_ok and openclaw_ok
+    return {
+        "status": "ok" if ok else "degraded",
+        "backend": True,
+        "database": db_ok,
+        "openclaw": openclaw_ok,
+    }
 
 
 @app.get("/api/skills", response_model=list[SkillOut])

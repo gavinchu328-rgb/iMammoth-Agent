@@ -18,6 +18,8 @@ export interface Database {
   example_query: string
   searchable: boolean
   project?: string
+  storage_path?: string | null
+  service_endpoint?: string | null
 }
 
 export interface DatabaseSearchResponse {
