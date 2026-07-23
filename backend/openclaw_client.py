@@ -4,31 +4,33 @@ from collections.abc import AsyncIterator
 import httpx
 
 from config import settings
+from openclaw_route import openclaw_user_id
 
 
 class OpenClawError(Exception):
     pass
 
 
-def _openclaw_headers() -> dict[str, str]:
+def _openclaw_headers(agent_id: str | None = None) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {settings.openclaw_api_key}",
         "Content-Type": "application/json",
-        "x-openclaw-agent-id": settings.openclaw_agent_id,
+        "x-openclaw-agent-id": (agent_id or settings.openclaw_agent_id).strip(),
     }
 
 
-def _openclaw_user_id(session_id: str | None) -> str:
-    # OpenClaw keys server-side session state by the "user" field.
-    # AI4Drug uses conv:<id> so the same conversation appears in Control UI.
-    return f"conv:{session_id or 'anonymous'}"
-
-
-def _chat_payload(messages: list[dict], *, session_id: str | None, stream: bool) -> dict:
+def _chat_payload(
+    messages: list[dict],
+    *,
+    session_id: str,
+    stream: bool,
+    model: str | None = None,
+) -> dict:
+    # 对齐 AI4Drug：user=conv:<session> 固定绑定 OpenClaw 服务端会话
     return {
         "messages": messages,
-        "model": settings.openclaw_model,
-        "user": _openclaw_user_id(session_id),
+        "model": (model or settings.openclaw_model).strip(),
+        "user": openclaw_user_id(session_id),
         "stream": stream,
         "max_tokens": 64000,
     }
@@ -37,14 +39,20 @@ def _chat_payload(messages: list[dict], *, session_id: str | None, stream: bool)
 async def chat_completion(
     messages: list[dict],
     *,
-    session_id: str | None = None,
+    session_id: str,
+    agent_id: str | None = None,
+    model: str | None = None,
 ) -> tuple[str, dict | None]:
     url = f"{settings.openclaw_base_url}/v1/chat/completions"
-    payload = _chat_payload(messages, session_id=session_id, stream=False)
+    payload = _chat_payload(messages, session_id=session_id, stream=False, model=model)
 
     async with httpx.AsyncClient(timeout=600.0) as client:
         try:
-            resp = await client.post(url, headers=_openclaw_headers(), json=payload)
+            resp = await client.post(
+                url,
+                headers=_openclaw_headers(agent_id),
+                json=payload,
+            )
             resp.raise_for_status()
         except httpx.HTTPError as e:
             raise OpenClawError(f"OpenClaw 请求失败: {e}") from e
@@ -58,18 +66,20 @@ async def chat_completion(
 async def chat_completion_stream(
     messages: list[dict],
     *,
-    session_id: str | None = None,
+    session_id: str,
+    agent_id: str | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield assistant text deltas from OpenClaw SSE stream."""
     url = f"{settings.openclaw_base_url}/v1/chat/completions"
-    payload = _chat_payload(messages, session_id=session_id, stream=True)
+    payload = _chat_payload(messages, session_id=session_id, stream=True, model=model)
 
     async with httpx.AsyncClient(timeout=600.0) as client:
         try:
             async with client.stream(
                 "POST",
                 url,
-                headers=_openclaw_headers(),
+                headers=_openclaw_headers(agent_id),
                 json=payload,
             ) as resp:
                 resp.raise_for_status()

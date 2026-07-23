@@ -6,6 +6,7 @@ const AI4DRUG_AGENT_PAGE = 'http://192.168.11.209:8888/ai4drug-pipeline.html'
 const HUAXUE_AGENT_PAGE = 'http://192.168.11.209:3011/'
 const DOMAIN_LEARNING_DIRECT_PAGE = 'http://192.168.11.209:8866/'
 const DOE_AGENT_PAGE = 'http://192.168.9.116:5173/'
+const BEDH_AGENT_PAGE = 'https://192.168.11.209:5173/'
 
 type AgentCard = {
   id: string
@@ -15,6 +16,8 @@ type AgentCard = {
   description: string
   detailPath: string
   externalUrl?: string
+  /** 为 true 时点击卡片直接新标签打开，不走内置 iframe 页 */
+  openInNewTab?: boolean
   disabled?: boolean
 }
 
@@ -57,6 +60,16 @@ export default function AgentsPage() {
         description: '贝叶斯优化与实验设计（DOE+ 多轮规划 / 实验条件建议 / 结果管理）',
         detailPath: '/agents/doe',
         externalUrl: DOE_AGENT_PAGE,
+      },
+      {
+        id: 'bedh',
+        name: '数字人智能体',
+        category: '数字人',
+        icon: '🧑‍💼',
+        description: '星云数字人 + Fay 语音对话（唤醒交互 / 大屏展示 / 多模态问答）',
+        detailPath: '/agents/bedh',
+        externalUrl: BEDH_AGENT_PAGE,
+        openInNewTab: true,
       },
       {
         id: 'coming-soon-1',
@@ -121,6 +134,10 @@ export default function AgentsPage() {
                 type="button"
                 onClick={() => {
                   if (disabled) return
+                  if (a.openInNewTab && a.externalUrl) {
+                    window.open(a.externalUrl, '_blank', 'noopener,noreferrer')
+                    return
+                  }
                   navigate(a.detailPath)
                 }}
                 className="group flex h-full cursor-pointer flex-col items-start gap-3 rounded-[20px] border border-[#E5E5E5] bg-[radial-gradient(60%_60%_at_100%_100%,_#E1EAFF_0%,_#FFFFFF_100%)] p-4 text-left transition-all duration-300 hover:border-slate-200 hover:shadow-md active:scale-[1.02] md:p-5"

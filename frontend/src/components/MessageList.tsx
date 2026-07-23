@@ -31,6 +31,10 @@ export default function MessageList({ messages, loading, streaming }: Props) {
     [streaming?.content],
   )
 
+  const awaitingAssistant =
+    loading ||
+    (streaming != null && messages.length > 0 && messages[messages.length - 1]?.role === 'user')
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex min-h-full min-w-0 flex-col items-center px-2 py-6 md:px-4 md:pb-10">
@@ -54,47 +58,23 @@ export default function MessageList({ messages, loading, streaming }: Props) {
             ),
           )}
 
-          {loading && streaming && (
+          {awaitingAssistant && (
             <div className="w-full min-w-0">
               <div className="flex items-center gap-2 pb-2">
                 <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
               </div>
               <div className="w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 md:px-5 md:py-4">
-                {streaming.steps.length > 0 || streaming.content ? (
-                  <LiveProcessPanel
-                    steps={streaming.steps}
-                    content={
-                      streamingParsed?.hasProcess
+                <LiveProcessPanel
+                  steps={streaming?.steps ?? []}
+                  skillName={streaming?.skillName}
+                  content={
+                    streaming && (streaming.steps.length > 0 || streaming.content)
+                      ? streamingParsed?.hasProcess
                         ? streamingParsed.finalAnswer || undefined
                         : streaming.content || undefined
-                    }
-                  />
-                ) : (
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <div className="flex gap-1">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '0ms' }} />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '150ms' }} />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '300ms' }} />
-                    </div>
-                    思考中...
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {loading && !streaming && (
-            <div className="w-full min-w-0">
-              <div className="flex items-center gap-2 pb-2">
-                <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
-              </div>
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 text-sm text-slate-500">
-                <div className="flex gap-1">
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '0ms' }} />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '150ms' }} />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-[#4BA4F8]" style={{ animationDelay: '300ms' }} />
-                </div>
-                思考中...
+                      : undefined
+                  }
+                />
               </div>
             </div>
           )}

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 const AI4DRUG_AGENT_PAGE = 'http://192.168.11.209:8888/ai4drug-pipeline.html'
@@ -6,6 +6,7 @@ const HUAXUE_AGENT_PAGE = 'http://192.168.11.209:3011/'
 const DOMAIN_LEARNING_AGENT_PAGE = '/domainlearning-embed.html'
 const DOMAIN_LEARNING_DIRECT_PAGE = 'http://192.168.11.209:8866/'
 const DOE_AGENT_PAGE = 'http://192.168.9.116:5173/'
+const BEDH_AGENT_PAGE = 'https://192.168.11.209:5173/'
 
 type Agent = {
   id: string
@@ -39,6 +40,12 @@ const AGENTS: Record<string, Agent> = {
     iframeUrl: DOE_AGENT_PAGE,
     externalUrl: DOE_AGENT_PAGE,
   },
+  bedh: {
+    id: 'bedh',
+    name: '数字人智能体',
+    iframeUrl: BEDH_AGENT_PAGE,
+    externalUrl: BEDH_AGENT_PAGE,
+  },
 }
 
 export default function AgentDetailPage() {
@@ -46,6 +53,22 @@ export default function AgentDetailPage() {
   const navigate = useNavigate()
 
   const agent = useMemo(() => (agentId ? AGENTS[agentId] : undefined), [agentId])
+
+  // 数字人智能体仅支持新标签打开，避免 iframe 内嵌
+  useEffect(() => {
+    if (agentId === 'bedh') {
+      window.open(BEDH_AGENT_PAGE, '_blank', 'noopener,noreferrer')
+      navigate('/agents', { replace: true })
+    }
+  }, [agentId, navigate])
+
+  if (agentId === 'bedh') {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center bg-[#F9FAFB] text-sm text-slate-500">
+        正在新标签页打开数字人智能体…
+      </div>
+    )
+  }
 
   if (!agent) {
     return (

@@ -75,3 +75,54 @@ async def save_assistant_reply(
         if s.title == "新对话" or not had_history:
             s.title = title_from_message(user_message)
         await db.commit()
+
+
+async def stop_chat_session(
+    *,
+    session_id: uuid.UUID,
+    reply: str,
+    db: AsyncSession,
+) -> str:
+    """Mark process log done and persist a stopped assistant reply if awaiting one."""
+    from process_log_store import append_process_done, read_process_log_snapshot
+    from reply_rebuild import rebuild_reply_with_live_steps
+
+    snap = read_process_log_snapshot(str(session_id))
+    if snap.get("done"):
+        return str(snap.get("reply") or reply or "（已停止生成）")
+
+    steps = snap.get("steps") or []
+    content = (reply or snap.get("content") or "").strip()
+    if steps and content:
+        final_reply = rebuild_reply_with_live_steps(content, steps)
+    else:
+        final_reply = content
+
+    if not final_reply.strip():
+        final_reply = "（已停止生成）"
+    elif "（已停止生成）" not in final_reply:
+        final_reply = f"{final_reply.rstrip()}\n\n（已停止生成）"
+
+    append_process_done(str(session_id), reply=final_reply, steps=steps)
+
+    result = await db.execute(
+        select(Session)
+        .options(selectinload(Session.messages))
+        .where(Session.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(404, "会话不存在")
+
+    messages = list(session.messages or [])
+    if messages and messages[-1].role == "user":
+        user_text = messages[-1].content
+        had_history = len(messages) > 1
+        assistant_msg = Message(session_id=session.id, role="assistant", content=final_reply)
+        db.add(assistant_msg)
+        session.updated_at = datetime.now(timezone.utc)
+        if session.title == "新对话" or not had_history:
+            session.title = title_from_message(user_text)
+        await db.commit()
+
+    return final_reply

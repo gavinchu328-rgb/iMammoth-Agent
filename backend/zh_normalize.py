@@ -25,11 +25,11 @@ async def to_zh(text: str) -> str:
     raw = (text or "").strip()
     if not raw or not is_mostly_english(raw):
         return raw
-    key = raw[:1200]
+    key = raw[:4000]
     if key in _cache:
         return _cache[key]
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 _URL,
                 json={
@@ -41,7 +41,7 @@ async def to_zh(text: str) -> str:
                         },
                         {"role": "user", "content": key},
                     ],
-                    "max_tokens": 512,
+                    "max_tokens": 2048,
                     "temperature": 0,
                     "chat_template_kwargs": {"enable_thinking": False},
                 },
@@ -62,11 +62,28 @@ async def normalize_step_zh(step: dict) -> dict:
     """思考步骤若为英文则译成中文；其它步骤原样返回。"""
     if step.get("kind") != "thinking":
         return step
-    text = (step.get("result") or step.get("input") or "").strip()
-    if not text or not is_mostly_english(text):
+    full = (step.get("detail") or step.get("result") or step.get("input") or "").strip()
+    if not full:
         return step
-    zh = await to_zh(text)
+    if not is_mostly_english(full):
+        return step
+    zh = await to_zh(full)
+    preview = zh if len(zh) <= 300 else zh[:297] + "…"
     out = dict(step)
-    out["result"] = zh[:240]
-    out["input"] = zh[:120]
+    out["detail"] = zh
+    out["result"] = preview
+    out["input"] = preview
+    if step.get("title") and is_mostly_english(step.get("title", "")):
+        out["title"] = "深度思考"
+    return out
+
+
+async def normalize_steps_zh(steps: list[dict]) -> list[dict]:
+    """批量翻译思考步骤（用于流结束后的最终归档）。"""
+    out: list[dict] = []
+    for step in steps:
+        if step.get("kind") == "thinking":
+            out.append(await normalize_step_zh(step))
+        else:
+            out.append(step)
     return out

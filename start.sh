@@ -14,13 +14,13 @@ echo "=== 启动后端 (8080) ==="
 (cd backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload) &
 BACKEND_PID=$!
 
-echo "=== 启动前端 (5173) ==="
-(cd frontend && npm run dev -- --host 0.0.0.0 --port 5173) &
+echo "=== 启动前端 (5174) ==="
+(cd frontend && npm run dev -- --host 0.0.0.0 --port 5174) &
 FRONTEND_PID=$!
 
 echo ""
 echo "猛犸智能体已启动:"
-echo "  前端: http://localhost:5173"
+echo "  前端: http://localhost:5174"
 echo "  后端: http://localhost:8080"
 echo "  数据库: mammoth_agent @ localhost:5434"
 echo ""

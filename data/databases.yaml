@@ -49,6 +49,26 @@ databases:
   example_query: CC(=O)Oc1ccccc1C(=O)O
   searchable: false
   project: 药物研发
+- id: rcsb-pdb-text
+  name: RCSB PDB 文本搜索
+  category: 蛋白结构
+  icon: 🔍
+  description: 在 RCSB PDB 全库按关键词全文检索，返回匹配条数、PDB ID 与相关性评分。
+  volume: 在线 API（RCSB Search v2）
+  source_type: online
+  example_query: MCP chemotaxis protein
+  searchable: true
+  project: 药物研发
+- id: rcsb-pdb-metadata
+  name: RCSB PDB 元数据
+  category: 蛋白结构
+  icon: 📋
+  description: 按 PDB ID 查询分辨率、实验方法、标题、配体实体与发布日期等条目元数据。
+  volume: 在线 API（RCSB Data API）
+  source_type: online
+  example_query: 4Z9H
+  searchable: true
+  project: 药物研发
 - id: rcsb-pdb
   name: RCSB PDB
   category: 蛋白结构

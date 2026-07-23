@@ -4,47 +4,56 @@ interface Props {
   value: string
   onChange: (v: string) => void
   onSend: () => void
+  onStop?: () => void
   loading: boolean
   placeholder?: string
   /** center = welcome 大输入框；footer = 对话态紧凑输入框 */
   variant?: 'footer' | 'center'
 }
 
-function SendButton({
-  disabled,
-  loading,
-  onClick,
-}: {
-  disabled: boolean
-  loading: boolean
-  onClick: () => void
-}) {
-  const inactive = disabled || loading
-
+function StopButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={inactive}
+      className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-[#3370FF] shadow-sm transition-colors hover:bg-[#2860E1]"
+      aria-label="停止生成"
+    >
+      <span className="relative flex h-3.5 w-3.5 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-sm bg-white opacity-75" />
+        <span className="relative inline-flex h-3.5 w-3.5 rounded-sm bg-white" />
+      </span>
+    </button>
+  )
+}
+
+function SendButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
       className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
-        inactive
+        disabled
           ? 'cursor-not-allowed bg-[#E5E6EB]'
           : 'cursor-pointer bg-[#3370FF] shadow-sm hover:bg-[#2860E1]'
       }`}
       aria-label="发送"
     >
-      {loading ? (
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#A8ABB2]/40 border-t-[#A8ABB2]" />
-      ) : (
-        <svg
-          viewBox="0 0 16 16"
-          className={`h-4 w-4 ${inactive ? 'text-[#A8ABB2]' : 'text-white'}`}
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <path d="M8 2.2 13.8 8.6H10.2V13.8H5.8V8.6H2.2L8 2.2Z" />
-        </svg>
-      )}
+      <svg
+        viewBox="0 0 16 16"
+        className={`h-4 w-4 ${disabled ? 'text-[#A8ABB2]' : 'text-white'}`}
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M8 2.2 13.8 8.6H10.2V13.8H5.8V8.6H2.2L8 2.2Z" />
+      </svg>
     </button>
   )
 }
@@ -56,6 +65,7 @@ export default function ChatInput({
   value,
   onChange,
   onSend,
+  onStop,
   loading,
   placeholder,
   variant = 'footer',
@@ -106,7 +116,11 @@ export default function ChatInput({
         />
       </div>
       <div className={`flex items-center justify-end ${footPad}`}>
-        <SendButton disabled={!value.trim() || loading} loading={loading} onClick={onSend} />
+        {loading && onStop ? (
+          <StopButton onClick={onStop} />
+        ) : (
+          <SendButton disabled={!value.trim() || loading} onClick={onSend} />
+        )}
       </div>
     </div>
   )

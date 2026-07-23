@@ -1,15 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Skill } from '../api/client'
 import SkillPlaza from '../components/SkillPlaza'
+import { useApiRetry } from '../hooks/useApiRetry'
 
 export default function SkillsPage() {
   const navigate = useNavigate()
   const [skills, setSkills] = useState<Skill[]>([])
 
-  useEffect(() => {
-    api.skills().then(setSkills).catch(console.error)
-  }, [])
+  useApiRetry(
+    useCallback(async () => {
+      const list = await api.skills()
+      setSkills(list)
+    }, []),
+  )
 
   const handleSelect = (skill: Skill) => {
     navigate('/', { state: { prompt: skill.example.trim(), skill } })

@@ -1,7 +1,7 @@
 # 猛犸智能体 · 部署与运维
 
 > 代码根目录：`/data2/mammoth-agent`  
-> 文档版本：2026-07-20
+> 文档版本：2026-07-23
 
 ---
 
@@ -34,7 +34,7 @@
 ## 2. 架构与端口
 
 ```
-浏览器 :5173
+浏览器 :5174
    │  /api 代理
    ▼
 猛犸 Backend :8080  ──► PostgreSQL :5434 (库 mammoth_agent)
@@ -50,7 +50,7 @@
 
 | 服务 | 端口 | 谁维护 |
 |------|------|--------|
-| 猛犸前端 | 5173 | 本仓库 `scripts/service.sh` |
+| 猛犸前端 | 5174 | 本仓库 `scripts/service.sh` |
 | 猛犸后端 | 8080 | 本仓库 `scripts/service.sh` |
 | PostgreSQL | 5434 | Docker 容器 `postgres` |
 | OpenClaw Gateway | 18789 | systemd user：`openclaw-gateway.service` |
@@ -84,9 +84,36 @@ MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh start
 
 访问：
 
-- 前端：http://\<host\>:5173
+- 前端：http://\<host\>:5174
 - 后端健康（轻量）：http://\<host\>:8080/api/health
 - 后端深度探针：http://\<host\>:8080/api/health/deep
+
+### 3.0 浏览器「不安全」与 localhost 转发
+
+| 访问方式 | 浏览器显示 | 说明 |
+|----------|------------|------|
+| `http://localhost:5174`（SSH / Cursor 端口转发） | 通常可用 | **localhost 属于安全上下文**，流式对话等功能正常 |
+| `http://192.168.x.x:5174`（直连局域网 IP） | 「不安全」 | 纯 HTTP 非安全上下文，旧版前端可能因 `crypto.randomUUID()` 失败导致发送按钮一直转圈 |
+
+**推荐用法（开发）：**
+
+1. 用 Cursor / SSH 把服务器 `5174` 转发到本机，浏览器打开 `http://localhost:5174`。
+2. 或刷新到已修复的前端（`newId` 兼容非安全上下文），直连 `http://192.168.11.209:5174` 也可正常发送。
+
+**若需局域网直连且地址栏显示安全（HTTPS）：**
+
+在内网用反向代理终止 TLS，例如 Caddy（自签证书，内网够用）：
+
+```bash
+# 示例：/etc/caddy/Caddyfile
+192.168.11.209 {
+    tls internal
+    reverse_proxy /api/* 127.0.0.1:8080
+    reverse_proxy /* 127.0.0.1:5174
+}
+```
+
+或使用 `mkcert` 为内网 IP 签发受信任证书后配置 Nginx/Caddy。有公网域名时可用 Let's Encrypt。
 
 日志：
 
@@ -109,6 +136,23 @@ MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh start
 # 以生产模式启动（会自动 build，源码有变更时重建）
 MAMMOTH_FRONTEND_MODE=prod ./scripts/service.sh restart
 ```
+
+### 3.2 运维脚本一览
+
+| 脚本 | 作用 | 典型命令 |
+|------|------|----------|
+| `scripts/service.sh` | 猛犸前后端、deps 探针 | `start` / `status` / `deps` |
+| `scripts/bedh-service.sh` | 数字人智能体（本机 BEDH） | `start` / `status` |
+| `scripts/doe-service.sh` | DOE 实验设计（SSH 到 116） | `install` / `status` / `fix-frontend` |
+| `scripts/doe-remote-service.sh` | DOE 在 116 本机执行（由 install 同步） | — |
+| `scripts/test_ai4drug_process_display.py` | AI4Drug 技能过程展示回归 | 手动跑单技能 |
+
+**近期行为说明（2026-07-23）：**
+
+- 刷新 `/c/:sessionId` 时，`loadSession` 不再阻塞于过程日志 tail；消息先展示，流式恢复在后台进行。
+- 模型若把折叠模板写进「最终回答」，前后端会从工具步骤合成 ADMET 表格等可读结果（`reply_rebuild` / `parseProcessLog`）。
+- MCP / 流式超时统一为 10 分钟（`mcp_tool_timeout_ms=600000`）；分子设计按分子数延长预算。
+- DOE 前端须监听 `0.0.0.0:5173`；仅 `127.0.0.1` 时智能体广场 iframe 会 connection refused，用 `doe-service.sh fix-frontend` 修复。
 
 ---
 
@@ -142,7 +186,7 @@ nohup uvicorn main:app --host 0.0.0.0 --port 8080 > /tmp/mammoth-backend.log 2>&
 ```bash
 cd /data2/mammoth-agent/frontend
 npm install          # 首次
-nohup npm run dev -- --host 0.0.0.0 --port 5173 > /tmp/mammoth-frontend.log 2>&1 &
+nohup npm run dev -- --host 0.0.0.0 --port 5174 > /tmp/mammoth-frontend.log 2>&1 &
 ```
 
 **生产模式**
@@ -151,7 +195,7 @@ nohup npm run dev -- --host 0.0.0.0 --port 5173 > /tmp/mammoth-frontend.log 2>&1
 cd /data2/mammoth-agent/frontend
 npm install
 npm run build
-nohup npm run preview -- --host 0.0.0.0 --port 5173 > /tmp/mammoth-frontend.log 2>&1 &
+nohup npm run preview -- --host 0.0.0.0 --port 5174 > /tmp/mammoth-frontend.log 2>&1 &
 ```
 
 Vite 已把 `/api` 代理到 `127.0.0.1:8080`（dev 与 preview 均生效）。
@@ -205,16 +249,61 @@ Workspace：`/home/dbcloud/.openclaw/workspace/`（含 `AGENTS.md` / `SOUL.md` /
 | 物质科学智能体 | `huaxue` | http://192.168.11.209:3011/ | `/data1/huaxue` 等 | 192.168.11.209 |
 | 领域学习智能体 | `domainlearning` | 广场内 `/domainlearning-embed.html`（经猛犸代理）；直连 `http://192.168.11.209:8866/` | `/data1/Domainlearning` | 192.168.11.209 |
 | **DOE 实验设计智能体** | `doe` | http://192.168.9.116:5173/ | `/home/admin/AIProject/DOEAgent` | **192.168.9.116** |
+| **数字人智能体** | `bedh` | https://192.168.11.209:5173/ | `/data1/BEDH`（Fay + XmovLiteAvatarJSDemo） | **192.168.11.209** |
 
 **DOE 实验设计智能体**（Design of Experiments）提供 DOE+ 贝叶斯优化：创建实验、多轮条件建议、结果记录与可视化。技术栈为 FastAPI + SQLite 后端、React 前端。
 
+**数字人智能体**（BEDH）基于 Fay 对话后端与星云数字人 SDK 前端，支持语音唤醒、实时播报与大屏展示（`/screen/index.html`）。前端 Vite 开发服务默认 **HTTPS :5173**（自签名证书）；Fay HTTP API **:5000**，WebSocket **:10002 / :10003**。
+
 ```bash
-# 健康检查（从猛犸宿主机或同网段）
+# 健康检查
+curl -sk -o /dev/null -w '%{http_code}\n' https://192.168.11.209:5173/
+curl -s -o /dev/null -w '%{http_code}\n' http://192.168.11.209:5000/
+
+# 启停（猛犸仓库封装脚本，推荐）
+/data2/mammoth-agent/scripts/bedh-service.sh status
+/data2/mammoth-agent/scripts/bedh-service.sh start
+/data2/mammoth-agent/scripts/bedh-service.sh stop
+/data2/mammoth-agent/scripts/bedh-service.sh restart
+
+# 或直接在 BEDH 目录（详见 /data1/BEDH/README.txt）
+cd /data1/BEDH
+bash deploy/scripts/start_fay.sh
+cd XmovLiteAvatarJSDemo && npm run dev -- --host 0.0.0.0 --port 5173
+
+# 后台常驻日志
+tail -f /data1/BEDH/deploy/logs/fay.nohup.log
+tail -f /data1/BEDH/deploy/logs/frontend.nohup.log
+ss -ltnp | rg '5000|10002|10003|5173'
+```
+
+| 组件 | 端口 | 说明 |
+|------|------|------|
+| Xmov 前端 | 5173 | HTTPS，智能体广场 iframe 入口 |
+| Fay HTTP | 5000 | 对话 / ASR / TTS API |
+| Fay 数字人 WS | 10002 | 数字人链路 |
+| Fay 面板 WS | 10003 | 前端 WebSocket |
+| Conda 环境 | — | `/data1/Xmo` |
+| 配置主文件 | — | `Fay/system.conf`、`XmovLiteAvatarJSDemo/public/xmov_config.json` |
+| 完整文档 | — | `/data1/BEDH/README.txt` |
+
+```bash
+# DOE 健康检查（从猛犸宿主机或同网段）
 curl -s -o /dev/null -w '%{http_code}\n' http://192.168.9.116:5173/
 
-# SSH 登录宿主机后维护（账号由运维保管，勿写入仓库）
+# 启停（猛犸仓库封装脚本，经 SSH 管理 116 宿主机，推荐）
+/data2/mammoth-agent/scripts/doe-service.sh install    # 首次：同步远程启停脚本
+/data2/mammoth-agent/scripts/doe-service.sh status
+/data2/mammoth-agent/scripts/doe-service.sh start
+/data2/mammoth-agent/scripts/doe-service.sh restart
+/data2/mammoth-agent/scripts/doe-service.sh fix-frontend   # 前端只绑 127.0.0.1 时用
+
+# 认证：优先 ssh-copy-id；或临时 DOE_SSH_PASSWORD='…'（勿写入仓库，经 doe-ssh-runner.py 传递）
+# 环境变量：DOE_SSH_HOST DOE_SSH_USER DOE_SSH_KEY DOE_ROOT
+
+# 或 SSH 登录宿主机后本地维护
 ssh admin@192.168.9.116
-cd /home/admin/AIProject/DOEAgent
+bash /home/admin/AIProject/DOEAgent/scripts/mammoth-doe-service.sh status
 ```
 
 接入新外链智能体：在 `AgentsPage.tsx` 增加卡片，在 `AgentDetailPage.tsx` 的 `AGENTS` 增加同名 `id`，并更新本表。
@@ -281,6 +370,8 @@ curl -s http://127.0.0.1:8006/v1/models | head
 
 可选。药物相关技能走此 MCP：
 
+`openclaw.json` 中 `mcp.servers.ai4drug` 建议设置 `requestTimeoutMs: 300000`（默认 60s 会导致靶点发现等长任务超时 `-32001`）。
+
 ```bash
 # 示例（以现网为准）
 cd /data2/AI4Drug
@@ -328,15 +419,15 @@ curl -s http://127.0.0.1:8080/api/health/deep
 
 | 检查项 | 期望 |
 |--------|------|
-| 前端 5173 `/` | HTTP 200，且 HTML 含 `id="root"` |
-| `/api/sessions`（经 5173 代理） | HTTP 200，通常 < 3s |
+| 前端 5174 `/` | HTTP 200，且 HTML 含 `id="root"` |
+| `/api/sessions`（经 5174 代理） | HTTP 200，通常 < 3s |
 | 后端 `/api/health` | `status=ok`，`database=true`（快速） |
 | 后端 `/api/health/deep` | 另含 `openclaw=true` |
 | OpenClaw 18789 | 可连 |
 | Postgres 5434 | 可连 |
 | Qwen 8006 | `/v1/models` 可访问 |
 
-> **注意**：仅 `curl :5173/` 返回 200 不代表页面可用；若 `/api/sessions` 超时或前端 shell 异常，浏览器仍会白屏或一直加载。
+> **注意**：仅 `curl :5174/` 返回 200 不代表页面可用；若 `/api/sessions` 超时或前端 shell 异常，浏览器仍会白屏或一直加载。
 
 ---
 

@@ -9,16 +9,26 @@ import urllib.request
 API = "http://127.0.0.1:8080/api/chat"
 TIMEOUT = 600
 
-# Order mirrors pipeline; each prompt is the skill card example.
+# Order mirrors pipeline; each prompt is the skill card example (with concrete IDs).
 STEPS = [
-    ("口袋预测", "帮我预测一下 EGFR 蛋白上有哪些可能的结合口袋"),
-    ("分子设计", "针对 EGFR 的结合口袋，帮我设计一批候选小分子"),
-    ("受体准备", "帮我把 EGFR 蛋白结构准备成可以做分子对接的受体"),
-    ("配体准备", "帮我把吉非替尼准备成可以做对接的配体"),
-    ("对接盒配置", "根据 EGFR 的结合口袋，帮我设置一下分子对接的搜索盒子"),
-    ("分子对接", "帮我把吉非替尼对接到 EGFR 蛋白上，看看结合得好不好"),
-    ("ADMET评估", "帮我评估一下这批候选分子的 ADMET 性质，看看哪些更值得推进"),
-    ("逆合成分析", "帮我分析一下吉非替尼大概可以怎么合成"),
+    ("靶点发现", "帮我找一下肺癌的药物靶点"),
+    ("蛋白质获取", "帮我获取 EGFR_3W2S 蛋白的三维结构信息"),
+    ("口袋预测", "帮我预测 EGFR（PDB: 3W2S）上有哪些可能的结合口袋"),
+    ("分子设计", "针对 EGFR（PDB: 3W2S）口袋 EGFR_3W2S_pocket1，帮我设计 3 个候选小分子"),
+    ("3D构象生成", "帮我给阿司匹林（SMILES: CC(=O)Oc1ccccc1C(=O)O）生成三维构象"),
+    ("受体准备", "帮我把 EGFR 蛋白结构（PDB: 3W2S）准备成可以做分子对接的受体"),
+    (
+        "配体准备",
+        "帮我把吉非替尼（SMILES: CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl）准备成可以做对接的配体，"
+        "molecule id 用 EGFR_3W2S_pocket1_mol0",
+    ),
+    ("对接盒配置", "针对 EGFR（PDB: 3W2S）ATP 结合口袋 EGFR_3W2S_pocket1，帮我设置分子对接的搜索盒子"),
+    (
+        "分子对接",
+        "帮我把吉非替尼（SMILES: CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl）对接到 EGFR（PDB: 3W2S）上，并给出对接打分",
+    ),
+    ("ADMET评估", "帮我评估吉非替尼（SMILES: CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl）的 ADMET 性质"),
+    ("逆合成分析", "帮我分析一下吉非替尼（SMILES: CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl）大概可以怎么合成"),
 ]
 
 

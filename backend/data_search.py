@@ -9,6 +9,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,9 @@ CHEMBL_UNIPROT = AI4DRUG_ROOT / "models/chembl/chembl_uniprot_mapping.txt"
 OT_GRAPHQL = "https://api.platform.opentargets.org/api/v4/graphql"
 RCSB_PDB = "https://files.rcsb.org/download/{pdb}.pdb"
 RCSB_THUMB = "https://cdn.rcsb.org/images/structures/{pdb}_assembly-1.jpeg"
+RCSB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
+RCSB_ENTRY_URL = "https://data.rcsb.org/rest/v1/core/entry/{pdb_id}"
+RCSB_NONPOLYMER_URL = "https://data.rcsb.org/rest/v1/core/nonpolymer_entity/{pdb_id}/{entity_id}"
 PUBCHEM_SDF = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{smiles}/SDF?record_type=3d"
 
 HUAXUE_COMPOUNDS_API = "http://127.0.0.1:3010/api/compounds"
@@ -185,6 +189,137 @@ def search_chembl_uniprot(query: str, *, limit: int = 20) -> dict[str, Any]:
             if len(matches) >= limit:
                 break
     return {"query": query, "count": len(matches), "mappings": matches}
+
+
+def _entry_resolution(pdb_id: str) -> float | None:
+    try:
+        data = _http_get_json(RCSB_ENTRY_URL.format(pdb_id=pdb_id.upper()), timeout=12)
+        if not isinstance(data, dict):
+            return None
+        info = data.get("rcsb_entry_info") or {}
+        res = info.get("resolution_combined")
+        if isinstance(res, list) and res:
+            return float(res[0])
+        if isinstance(res, (int, float)):
+            return float(res)
+    except Exception:
+        return None
+    return None
+
+
+def search_rcsb_pdb_text(query: str, *, limit: int = 10) -> dict[str, Any]:
+    """RCSB PDB full-text search (used by PDB 文本搜索 skill)."""
+    q = query.strip()
+    if not q:
+        raise ValueError("搜索关键词不能为空")
+    payload = {
+        "query": {
+            "type": "terminal",
+            "service": "full_text",
+            "parameters": {"value": q},
+        },
+        "return_type": "entry",
+        "request_options": {
+            "paginate": {"start": 0, "rows": max(1, min(limit, 25))},
+            "sort": [{"sort_by": "rcsb_entry_info.resolution_combined", "direction": "asc"}],
+        },
+    }
+    req = urllib.request.Request(
+        RCSB_SEARCH_URL,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        data = json.loads(resp.read().decode())
+    hits: list[dict[str, Any]] = []
+    for row in data.get("result_set") or []:
+        if not isinstance(row, dict):
+            continue
+        pid = str(row.get("identifier") or "").upper()
+        if not pid:
+            continue
+        hits.append({"pdb_id": pid, "score": row.get("score")})
+    if hits:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(_entry_resolution, hit["pdb_id"]): hit for hit in hits}
+            for fut in as_completed(futures):
+                hit = futures[fut]
+                resolution = fut.result()
+                if resolution is not None:
+                    hit["resolution"] = resolution
+    return {
+        "query": q,
+        "total_count": data.get("total_count"),
+        "count": len(hits),
+        "hits": hits,
+        "result_set": data.get("result_set") or [],
+    }
+
+
+def _fetch_ligand_details(pdb_id: str, entity_id: str) -> dict[str, Any]:
+    try:
+        data = _http_get_json(
+            RCSB_NONPOLYMER_URL.format(pdb_id=pdb_id.upper(), entity_id=entity_id),
+            timeout=12,
+        )
+        if not isinstance(data, dict):
+            return {"entity_id": entity_id}
+        nonpoly = data.get("pdbx_entity_nonpoly") or {}
+        rcsb_np = data.get("rcsb_nonpolymer_entity") or {}
+        container = data.get("rcsb_nonpolymer_entity_container_identifiers") or {}
+        return {
+            "entity_id": entity_id,
+            "chem_comp_id": nonpoly.get("comp_id") or container.get("nonpolymer_comp_id"),
+            "name": (nonpoly.get("name") or rcsb_np.get("pdbx_description") or "").strip(),
+        }
+    except Exception:
+        return {"entity_id": entity_id}
+
+
+def lookup_rcsb_pdb_metadata(pdb_id: str) -> dict[str, Any]:
+    """RCSB entry metadata lookup (used by PDB 元数据查询 skill)."""
+    pid = pdb_id.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{4}", pid):
+        raise ValueError("PDB ID 应为 4 位字母数字，如 1M17")
+    data = _http_get_json(RCSB_ENTRY_URL.format(pdb_id=pid), timeout=45)
+    if not isinstance(data, dict):
+        raise ValueError("RCSB 返回格式异常")
+    info = data.get("rcsb_entry_info") or {}
+    struct = data.get("struct") or {}
+    acc = data.get("rcsb_accession_info") or {}
+    exptl = data.get("exptl") or []
+    method = ""
+    if isinstance(exptl, list) and exptl and isinstance(exptl[0], dict):
+        method = str(exptl[0].get("method") or "")
+    release = acc.get("initial_release_date") or acc.get("deposit_date")
+    ligands: list[str] = []
+    for row in data.get("rcsb_entry_container_identifiers", {}).get("non_polymer_entity_ids") or []:
+        ligands.append(str(row))
+    ligand_details: list[dict[str, Any]] = []
+    if ligands:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_fetch_ligand_details, pid, eid): eid for eid in ligands}
+            for fut in as_completed(futures):
+                detail = fut.result()
+                if detail:
+                    ligand_details.append(detail)
+        ligand_details.sort(key=lambda row: str(row.get("entity_id") or ""))
+    return {
+        "pdb_id": pid,
+        "title": (struct.get("title") or "").strip(),
+        "resolution": info.get("resolution_combined"),
+        "experimental_method": method,
+        "release_date": str(release)[:10] if release else None,
+        "deposit_date": acc.get("deposit_date"),
+        "polymer_entity_count": info.get("polymer_entity_count"),
+        "nonpolymer_entity_count": info.get("nonpolymer_entity_count"),
+        "ligand_entity_ids": ligands,
+        "ligands": ligand_details,
+        "download_url": RCSB_PDB.format(pdb=pid.lower()),
+        "thumbnail_url": RCSB_THUMB.format(pdb=pid.lower()),
+        "entry": data,
+    }
 
 
 def search_pdb(pdb_id: str, mirror: str = "rcsb") -> dict[str, Any]:
@@ -650,6 +785,8 @@ SEARCH_HANDLERS: dict[str, Any] = {
     "disease-zh-en-llm-cache": search_disease_llm_cache,
     "drugbank-approved-csv": search_drugbank,
     "chembl-uniprot-mapping": search_chembl_uniprot,
+    "rcsb-pdb-text": search_rcsb_pdb_text,
+    "rcsb-pdb-metadata": lookup_rcsb_pdb_metadata,
     "rcsb-pdb": lambda q: search_pdb(q, "rcsb"),
     "pdbe-pdb": lambda q: search_pdb(q, "pdbe"),
     "pdbj-pdb": lambda q: search_pdb(q, "pdbj"),

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Skill } from '../api/client'
+import { collectSkillCategoryTags, skillMatchesCategory } from '../utils/skillUtils'
 
 interface Props {
   skills: Skill[]
@@ -33,10 +34,10 @@ function FileTextIcon() {
 }
 
 export default function SkillPlaza({ skills, onSelect, compact = false, showTitle = true }: Props) {
-  const categories = ['全部', ...Array.from(new Set(skills.map((s) => s.category)))]
+  const categories = ['全部', ...collectSkillCategoryTags(skills)]
   const [active, setActive] = useState('全部')
 
-  const filtered = active === '全部' ? skills : skills.filter((s) => s.category === active)
+  const filtered = skills.filter((skill) => skillMatchesCategory(skill, active))
 
   return (
     <div className={compact ? 'w-full' : ''}>
@@ -70,7 +71,13 @@ export default function SkillPlaza({ skills, onSelect, compact = false, showTitl
             <button
               key={skill.id}
               type="button"
-              onClick={() => onSelect({ ...skill, example: skill.example.trim() })}
+              onClick={() =>
+                onSelect({
+                  ...skill,
+                  category: active !== '全部' ? active : skill.category,
+                  example: skill.example.trim(),
+                })
+              }
               className="group flex h-full cursor-pointer flex-col items-start gap-3 rounded-[20px] border border-[#E5E5E5] bg-[radial-gradient(60%_60%_at_100%_100%,_#E1EAFF_0%,_#FFFFFF_100%)] p-4 text-left transition-all duration-300 hover:border-slate-200 hover:shadow-md active:scale-[1.02] md:p-5"
             >
               <div className="flex items-center gap-2">

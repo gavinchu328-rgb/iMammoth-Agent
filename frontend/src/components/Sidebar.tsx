@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, useLocation } from 'react-router-dom'
 import type { Session } from '../api/client'
+import type { ApiLoadStatus } from '../hooks/useApiRetry'
 
 interface Props {
   sessions: Session[]
+  sessionsLoadStatus?: ApiLoadStatus
   currentSessionId?: string
   onNewChat: () => void
   onSelectSession: (id: string) => void
@@ -70,6 +72,7 @@ function formatSessionTime(iso?: string) {
 
 export default function Sidebar({
   sessions,
+  sessionsLoadStatus = 'ready',
   currentSessionId,
   onNewChat,
   onSelectSession,
@@ -192,7 +195,13 @@ export default function Sidebar({
 
         <div className="px-2.5 py-1.5 text-[14px] font-semibold text-gray-600">最近</div>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pb-3">
-          {sessions.length === 0 && (
+          {sessions.length === 0 && sessionsLoadStatus === 'loading' && (
+            <p className="px-2.5 py-2 text-sm text-gray-400">正在加载对话记录…</p>
+          )}
+          {sessions.length === 0 && sessionsLoadStatus === 'error' && (
+            <p className="px-2.5 py-2 text-sm text-amber-600">服务连接中，请稍候…</p>
+          )}
+          {sessions.length === 0 && sessionsLoadStatus === 'ready' && (
             <p className="px-2.5 py-2 text-sm text-gray-400">暂无对话记录</p>
           )}
           {sessions.map((s) => {

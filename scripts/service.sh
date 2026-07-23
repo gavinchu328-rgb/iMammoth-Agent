@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND_DIR="$ROOT/backend"
 FRONTEND_DIR="$ROOT/frontend"
 BACKEND_PORT="${MAMMOTH_BACKEND_PORT:-8080}"
-FRONTEND_PORT="${MAMMOTH_FRONTEND_PORT:-5173}"
+FRONTEND_PORT="${MAMMOTH_FRONTEND_PORT:-5174}"
 FRONTEND_MODE="${MAMMOTH_FRONTEND_MODE:-dev}"   # dev | prod
 BACKEND_LOG="${MAMMOTH_BACKEND_LOG:-/tmp/mammoth-backend.log}"
 FRONTEND_LOG="${MAMMOTH_FRONTEND_LOG:-/tmp/mammoth-frontend.log}"
@@ -102,9 +102,9 @@ start_backend() {
     echo "后端已在 :${BACKEND_PORT} 运行"
     return 0
   fi
-  echo "启动后端 :${BACKEND_PORT}"
-  cd "$BACKEND_DIR"
-  nohup uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" >"$BACKEND_LOG" 2>&1 &
+  echo "启动后端 :${BACKEND_PORT} (watchdog)"
+  chmod +x "$ROOT/scripts/run-backend.sh"
+  nohup "$ROOT/scripts/run-backend.sh" >>"$BACKEND_LOG" 2>&1 &
   sleep 2
   echo "  log: $BACKEND_LOG"
   echo "  health: $(http_code "http://127.0.0.1:${BACKEND_PORT}/api/health")"
@@ -227,6 +227,8 @@ cmd_deps() {
   echo "猛犸 Backend     :${BACKEND_PORT}   health=$(http_code "http://127.0.0.1:${BACKEND_PORT}/api/health")"
   echo "猛犸 deep health :${BACKEND_PORT}   $(http_code "http://127.0.0.1:${BACKEND_PORT}/api/health/deep")"
   echo "猛犸 Frontend    :${FRONTEND_PORT}   http=$(http_code "http://127.0.0.1:${FRONTEND_PORT}/")  shell=$(frontend_shell_ok)"
+  echo "数字人 BEDH      :5173   https=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 https://127.0.0.1:5173/ 2>/dev/null || echo 000)  fay=$(http_code http://127.0.0.1:5000/)"
+  echo "DOE 实验设计     :5173@116  http=$(http_code http://192.168.9.116:5173/)"
   echo ""
   echo "OpenClaw agents (from ~/.openclaw/openclaw.json):"
   python3 - <<'PY' 2>/dev/null || echo "  (cannot read openclaw.json)"
@@ -246,6 +248,8 @@ PY
   echo "维护提示:"
   echo "  OpenClaw: systemctl --user {status|restart} openclaw-gateway"
   echo "  猛犸:     $ROOT/scripts/service.sh {start|stop|restart|status|build}"
+  echo "  数字人:   $ROOT/scripts/bedh-service.sh {start|stop|restart|status}"
+  echo "  DOE:      $ROOT/scripts/doe-service.sh {install|start|stop|restart|status|fix-frontend}"
   echo "  生产前端: MAMMOTH_FRONTEND_MODE=prod $ROOT/scripts/service.sh start"
   echo "  详情:     $ROOT/docs/DEPLOY.md"
 }
@@ -263,7 +267,7 @@ usage() {
 
 环境变量（可选）:
   MAMMOTH_BACKEND_PORT    默认 8080
-  MAMMOTH_FRONTEND_PORT   默认 5173
+  MAMMOTH_FRONTEND_PORT   默认 5174
   MAMMOTH_FRONTEND_MODE   dev（默认，HMR）| prod（build + vite preview）
   MAMMOTH_BACKEND_LOG     默认 /tmp/mammoth-backend.log
   MAMMOTH_FRONTEND_LOG    默认 /tmp/mammoth-frontend.log

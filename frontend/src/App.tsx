@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
+import BackendStatusBanner from './components/BackendStatusBanner'
 import ChatPage, { type ChatPageHandle } from './pages/ChatPage'
 import SkillsPage from './pages/SkillsPage'
 import AgentsPage from './pages/AgentsPage'
@@ -8,17 +9,16 @@ import AgentDetailPage from './pages/AgentDetailPage'
 import DataPlazaPage from './pages/DataPlazaPage'
 import DataSearchPage from './pages/DataSearchPage'
 import { useSessions } from './hooks/useChat'
+import { useBackendHealth } from './hooks/useBackendHealth'
+import { ChatProvider } from './context/ChatContext'
 
 export default function App() {
   const chatRef = useRef<ChatPageHandle>(null)
   const navigate = useNavigate()
-  const { sessions, refresh, remove } = useSessions()
+  const { sessions, refresh, remove, loadStatus: sessionsLoadStatus } = useSessions()
+  const { health: backendHealth } = useBackendHealth()
   const [collapsed, setCollapsed] = useState(false)
   const [currentSessionId, setCurrentSessionId] = useState<string>()
-
-  useEffect(() => {
-    refresh().catch(console.error)
-  }, [refresh])
 
   const handleNewChat = useCallback(() => {
     chatRef.current?.newChat()
@@ -61,9 +61,11 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
+      <BackendStatusBanner health={backendHealth} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           sessions={sessions}
+          sessionsLoadStatus={sessionsLoadStatus}
           currentSessionId={currentSessionId}
           onNewChat={handleNewChat}
           onSelectSession={handleSelectSession}
@@ -72,21 +74,23 @@ export default function App() {
           onToggle={() => setCollapsed((v) => !v)}
         />
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#F9FAFB]">
-          <Routes>
-            <Route
-              path="/"
-              element={<ChatPage ref={chatRef} onSessionChange={handleSessionChange} />}
-            />
-            <Route
-              path="/c/:sessionId"
-              element={<ChatPage ref={chatRef} onSessionChange={handleSessionChange} />}
-            />
-            <Route path="/skills" element={<SkillsPage />} />
-            <Route path="/data" element={<DataPlazaPage />} />
-            <Route path="/data/:databaseId" element={<DataSearchPage />} />
-            <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/agents/:agentId" element={<AgentDetailPage />} />
-          </Routes>
+          <ChatProvider>
+            <Routes>
+              <Route
+                path="/"
+                element={<ChatPage ref={chatRef} onSessionChange={handleSessionChange} />}
+              />
+              <Route
+                path="/c/:sessionId"
+                element={<ChatPage ref={chatRef} onSessionChange={handleSessionChange} />}
+              />
+              <Route path="/skills" element={<SkillsPage />} />
+              <Route path="/data" element={<DataPlazaPage />} />
+              <Route path="/data/:databaseId" element={<DataSearchPage />} />
+              <Route path="/agents" element={<AgentsPage />} />
+              <Route path="/agents/:agentId" element={<AgentDetailPage />} />
+            </Routes>
+          </ChatProvider>
         </main>
       </div>
     </div>

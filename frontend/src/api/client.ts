@@ -1,7 +1,10 @@
 export interface Skill {
   id: string
   name: string
+  /** Primary category (first tag); kept for backward compatibility. */
   category: string
+  /** All category tags this skill belongs to. */
+  categories?: string[]
   icon: string
   description: string
   example: string
@@ -34,6 +37,7 @@ export interface DatabaseSearchResponse {
 
 export interface SelectedSkillHint {
   name: string
+  category?: string
   systemPrompt: string
 }
 
@@ -54,7 +58,7 @@ export interface Session {
 }
 
 export interface LiveProcessStep {
-  kind: 'thinking' | 'tool'
+  kind: 'thinking' | 'tool' | 'skill' | 'web'
   title: string
   status: string
   name: string
@@ -64,6 +68,24 @@ export interface LiveProcessStep {
   tool_call_id?: string
   record_id?: string
   is_result_update?: boolean
+}
+
+export interface ProcessLogSnapshot {
+  in_progress: boolean
+  done: boolean
+  content: string
+  steps: LiveProcessStep[]
+  reply: string
+  error?: string | null
+  log_offset: number
+  stream_budget_sec?: number | null
+  molecule_count?: number | null
+}
+
+export interface ChatStreamSession {
+  session_id: string
+  stream_budget_sec?: number | null
+  molecule_count?: number | null
 }
 
 export interface ChatStreamDone {
@@ -76,7 +98,7 @@ export interface ChatStreamDone {
 }
 
 export interface ChatStreamHandlers {
-  onSession?: (sessionId: string) => void
+  onSession?: (payload: ChatStreamSession) => void
   onDelta?: (content: string) => void
   onStep?: (step: LiveProcessStep) => void
   onDone?: (payload: ChatStreamDone) => void
@@ -97,53 +119,92 @@ function parseSseBlock(block: string): { event: string; data: string } | null {
 async function consumeSse(
   response: Response,
   handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = response.body?.getReader()
   if (!reader) throw new Error('无法读取流式响应')
 
+  const abortIfNeeded = () => {
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted', 'AbortError')
+    }
+  }
+
   const decoder = new TextDecoder()
   let buffer = ''
   let finished = false
+  let lastSessionId = ''
+  let lastReply = ''
+
+  const handleBlock = (raw: string) => {
+    const parsed = parseSseBlock(raw)
+    if (!parsed) return
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(parsed.data) as Record<string, unknown>
+    } catch {
+      return
+    }
+    switch (parsed.event) {
+      case 'session': {
+        const sid = String((payload as { session_id?: string }).session_id ?? '')
+        lastSessionId = sid
+        handlers.onSession?.({
+          session_id: sid,
+          stream_budget_sec: (payload as { stream_budget_sec?: number }).stream_budget_sec,
+          molecule_count: (payload as { molecule_count?: number }).molecule_count,
+        })
+        break
+      }
+      case 'delta':
+        handlers.onDelta?.(String((payload as { content?: string }).content ?? ''))
+        break
+      case 'step':
+        handlers.onStep?.(payload as unknown as LiveProcessStep)
+        break
+      case 'error':
+        if (signal?.aborted) break
+        handlers.onError?.(String((payload as { message?: string }).message ?? '流式请求失败'))
+        break
+      case 'mammoth_done':
+      case 'done':
+        if (!finished) {
+          finished = true
+          lastReply = String((payload as { reply?: string }).reply ?? lastReply)
+          handlers.onDone?.(payload as unknown as ChatStreamDone)
+        }
+        break
+      default:
+        break
+    }
+  }
 
   while (true) {
+    abortIfNeeded()
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
 
     let sep = buffer.indexOf('\n\n')
     while (sep >= 0) {
-      const raw = buffer.slice(0, sep)
+      handleBlock(buffer.slice(0, sep))
       buffer = buffer.slice(sep + 2)
-      const parsed = parseSseBlock(raw)
-      if (parsed) {
-        const payload = JSON.parse(parsed.data)
-        switch (parsed.event) {
-          case 'session':
-            handlers.onSession?.(payload.session_id)
-            break
-          case 'delta':
-            handlers.onDelta?.(payload.content ?? '')
-            break
-          case 'step':
-            handlers.onStep?.(payload as LiveProcessStep)
-            break
-          case 'error':
-            handlers.onError?.(payload.message ?? '流式请求失败')
-            break
-          case 'mammoth_done':
-          case 'done':
-            // mammoth_done / done 可能各发一次，只处理一次
-            if (!finished) {
-              finished = true
-              handlers.onDone?.(payload as ChatStreamDone)
-            }
-            break
-          default:
-            break
-        }
-      }
       sep = buffer.indexOf('\n\n')
     }
+  }
+
+  if (buffer.trim()) {
+    handleBlock(buffer)
+  }
+
+  abortIfNeeded()
+
+  if (!finished && lastSessionId && !signal?.aborted) {
+    handlers.onDone?.({
+      session_id: lastSessionId,
+      reply: lastReply,
+      error: '连接已结束但未收到完成标记',
+    })
   }
 }
 
@@ -179,7 +240,13 @@ export const api = {
     }),
   sessions: () => request<Session[]>('/sessions'),
   getSession: (id: string) => request<Session>(`/sessions/${id}`),
+  getProcessLog: (id: string) => request<ProcessLogSnapshot>(`/sessions/${id}/process-log`),
   deleteSession: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
+  stopSession: (id: string, reply?: string) =>
+    request<{ ok: boolean; reply: string }>(`/sessions/${id}/stop`, {
+      method: 'POST',
+      body: JSON.stringify({ reply: reply ?? null }),
+    }),
   chat: (message: string, sessionId?: string, selectedSkill?: SelectedSkillHint) =>
     request<ChatResponse>('/chat', {
       method: 'POST',
@@ -188,6 +255,7 @@ export const api = {
         session_id: sessionId ?? null,
         selected_skill_name: selectedSkill?.name ?? null,
         selected_skill_system_prompt: selectedSkill?.systemPrompt ?? null,
+        selected_skill_category: selectedSkill?.category ?? null,
       }),
     }),
   chatStream: async (
@@ -205,6 +273,7 @@ export const api = {
         session_id: sessionId ?? null,
         selected_skill_name: selectedSkill?.name ?? null,
         selected_skill_system_prompt: selectedSkill?.systemPrompt ?? null,
+        selected_skill_category: selectedSkill?.category ?? null,
       }),
       signal,
     })
@@ -212,6 +281,22 @@ export const api = {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
       throw new Error(err.detail || '请求失败')
     }
-    await consumeSse(res, handlers)
+    await consumeSse(res, handlers, signal)
+  },
+  tailProcessLog: async (
+    sessionId: string,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal,
+    afterBytes = 0,
+  ) => {
+    const res = await fetch(
+      `${BASE}/sessions/${sessionId}/process-log/stream?after=${Math.max(0, afterBytes)}`,
+      { signal },
+    )
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || '无法恢复过程日志')
+    }
+    await consumeSse(res, handlers, signal)
   },
 }

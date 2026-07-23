@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Database } from '../api/client'
 import { dataPlazaPath } from '../utils/dataPlaza'
+import { useApiRetry } from '../hooks/useApiRetry'
 
 export default function DataPlazaPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [databases, setDatabases] = useState<Database[]>([])
 
-  useEffect(() => {
-    api.databases().then(setDatabases).catch(console.error)
-  }, [])
+  useApiRetry(
+    useCallback(async () => {
+      const list = await api.databases()
+      setDatabases(list)
+    }, []),
+  )
 
   const projects = useMemo(
     () => ['全部', ...Array.from(new Set(databases.map((d) => d.project || '药物研发')))],
