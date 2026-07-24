@@ -4,7 +4,6 @@ import type { StreamingState } from '../hooks/useChat'
 import LiveProcessPanel from './LiveProcessPanel'
 import ProcessPanel from './ProcessPanel'
 import { parseProcessLog } from '../utils/parseProcessLog'
-import { resolveStreamingDisplayContent } from '../utils/streamingDisplay'
 
 interface Props {
   messages: Message[]
@@ -26,21 +25,6 @@ export default function MessageList({ messages, loading, streaming }: Props) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading, streaming?.content, streaming?.steps.length])
-
-  const streamingParsed = useMemo(
-    () => (streaming?.content ? parseProcessLog(streaming.content) : null),
-    [streaming?.content],
-  )
-
-  const streamingDisplayContent = useMemo(
-    () =>
-      resolveStreamingDisplayContent(streaming?.content, {
-        hasLiveSteps: (streaming?.steps?.length ?? 0) > 0,
-        hasProcess: streamingParsed?.hasProcess,
-        parsedFinalAnswer: streamingParsed?.finalAnswer,
-      }),
-    [streaming?.content, streaming?.steps?.length, streamingParsed?.hasProcess, streamingParsed?.finalAnswer],
-  )
 
   const awaitingAssistant =
     loading ||
@@ -70,23 +54,17 @@ export default function MessageList({ messages, loading, streaming }: Props) {
           )}
 
           {awaitingAssistant && (
-            <div className="w-full min-w-0">
-              <div className="flex items-center gap-2 pb-2">
+            <div className="w-full min-w-0 space-y-4">
+              <div className="flex items-center gap-2">
                 <div className="text-lg font-semibold text-[#4BA4F8]">iMammoth Agent</div>
               </div>
-              <div className="w-full overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 md:px-5 md:py-4">
-                <LiveProcessPanel
-                  steps={streaming?.steps ?? []}
-                  skillName={streaming?.skillName}
-                  streamRaw={streaming?.content}
-                  awaitingFinalize={loading}
-                  content={
-                    streaming && (streaming.steps.length > 0 || streaming.content)
-                      ? streamingDisplayContent
-                      : undefined
-                  }
-                />
-              </div>
+              <LiveProcessPanel
+                steps={streaming?.steps ?? []}
+                skillName={streaming?.skillName}
+                streamRaw={streaming?.content}
+                awaitingFinalize={loading}
+                content={streaming?.content}
+              />
             </div>
           )}
           <div ref={bottomRef} />

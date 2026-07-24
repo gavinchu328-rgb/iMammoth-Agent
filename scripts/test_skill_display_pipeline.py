@@ -17,9 +17,9 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from reply_rebuild import (  # noqa: E402
     merge_live_steps,
-    synthesize_early_final_from_steps,
     synthesize_final_from_steps,
 )
+from skill_display import synthesize_early_final_from_steps  # noqa: E402
 from stream_content_filter import ClientStreamFilter  # noqa: E402
 from tool_summarize import (  # noqa: E402
     _looks_like_json_leak,

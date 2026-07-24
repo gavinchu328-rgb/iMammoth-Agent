@@ -31,7 +31,8 @@ assert(header.includes('分析过程'), header)
 assert(header.includes('思考 1'), header)
 
 const streamCls = getLiveStreamContentClassName()
-assert(streamCls.includes(PROCESS_PANEL_LAYOUT.streamContentMax), streamCls)
+assert(streamCls.includes('assistant-prose'), streamCls)
+assert(!streamCls.includes('max-h-'), 'stream content should not be height-limited')
 
 const compact = getLiveStepListClassName({ hasStreamAbove: true })
 const roomy = getLiveStepListClassName({ hasStreamAbove: false })

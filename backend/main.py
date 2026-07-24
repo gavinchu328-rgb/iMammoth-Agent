@@ -826,8 +826,8 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                         live_steps.append(data)  # type: ignore[arg-type]
                         if isinstance(data, dict) and _is_process_poll_done(data):
                             _seal_stale_background_execs()
-                        from reply_rebuild import extract_final_answer, merge_live_steps, synthesize_early_final_from_steps
-                        from skill_display import should_emit_early_final
+                        from reply_rebuild import extract_final_answer, merge_live_steps
+                        from skill_display import should_emit_early_final, synthesize_early_final_from_steps
                         from tool_summarize import polish_ai4drug_exec_steps
 
                         merged = polish_ai4drug_exec_steps(

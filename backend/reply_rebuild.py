@@ -1,4 +1,4 @@
-"""Rebuild assistant process markdown from live OpenClaw steps."""
+"""Rebuild assistant markdown: process section and final answer are independent."""
 
 from __future__ import annotations
 
@@ -6,17 +6,21 @@ import re
 
 from typing import Any
 
+from content_filters import (
+    extract_trailing_model_final,
+    has_rich_markdown_report,
+    is_final_answer_unusable,
+    sanitize_final_answer_text,
+    sanitize_process_step_text,
+)
 from tool_summarize import (
     _prefer_longer_text,
     is_billable_action_step,
     strip_paths,
-    strip_process_runtime_noise,
 )
 from skill_display import (
     should_emit_early_final,
-    synthesize_early_final_from_steps,
     synthesize_final_from_steps,
-    synthesize_pocket_final_from_steps,
 )
 
 
@@ -35,63 +39,67 @@ def extract_final_answer(reply: str) -> str:
 
     if not positions:
         if "## 分析过程" in raw or "##分析过程" in raw:
-            return ""
-        return raw
+            return extract_trailing_model_final(raw)
+        return sanitize_final_answer_text(raw)
 
-    def _clean_final_segment(text: str) -> str:
-        proc = text.find("## 分析过程")
-        proc2 = text.find("##分析过程")
-        cut = -1
-        for p in (proc, proc2):
-            if p >= 0 and (cut < 0 or p < cut):
-                cut = p
-        if cut >= 0:
-            text = text[:cut].strip()
-        noise = text.find("\n⚠️")
-        if noise >= 0:
-            text = text[:noise].strip()
-        return strip_process_runtime_noise(text).strip()
+    section_markers = ("## 最终回答", "##最终回答", "## 分析过程", "##分析过程")
 
-    candidates = [_clean_final_segment(raw[pos + mlen :]) for pos, mlen in positions]
-    candidates = [c for c in candidates if c and not _is_low_quality_final_answer(c)]
+    def slice_final_segment(start_pos: int, marker_len: int) -> str:
+        body = raw[start_pos + marker_len :]
+        cut_at: list[int] = []
+        for marker in section_markers:
+            pos = body.find(marker)
+            if pos > 0:
+                cut_at.append(pos)
+        if cut_at:
+            body = body[: min(cut_at)]
+        return sanitize_final_answer_text(body)
+
+    candidates = [
+        seg
+        for pos, mlen in positions
+        if (seg := slice_final_segment(pos, mlen)) and not is_final_answer_unusable(seg)
+    ]
     if candidates:
-        return max(candidates, key=len)
-    # fallback: last segment even if short
+        # 模型常在流末尾修订最终回答；取最后一个有效段，避免早期合成块与后续正文粘连。
+        return candidates[-1]
     last_pos, last_len = positions[-1]
-    return _clean_final_segment(raw[last_pos + last_len :])
+    return slice_final_segment(last_pos, last_len)
+
+
+def resolve_final_answer(
+    model_final: str,
+    steps: list[dict[str, Any]],
+    skill_name: str | None = None,
+) -> str:
+    """最终结果优先用模型流；仅当模型无有效正文时才用步骤合成兜底。"""
+    final = sanitize_final_answer_text((model_final or "").strip())
+    if final and not is_final_answer_unusable(final):
+        return final
+
+    synthesized = ""
+    if not skill_name or should_emit_early_final(steps, skill_name):
+        synthesized = (synthesize_final_from_steps(steps, skill_name) or "").strip()
+    if synthesized:
+        return synthesized
+    return final
+
+
+# Legacy name for tests
+def _merge_final_answer(
+    model_final: str,
+    steps: list[dict[str, Any]],
+    skill_name: str | None = None,
+) -> str:
+    return resolve_final_answer(model_final, steps, skill_name)
 
 
 def _is_low_quality_final_answer(text: str) -> bool:
-    """Detect collapsed process templates the model sometimes dumps as final answer."""
-    t = (text or "").strip()
-    if not t:
-        return True
-    compact = t.replace(" ", "")
-    if "##分析过程" in compact or "###步骤" in compact:
-        return True
-    if any(
-        token in t
-        for token in (
-            "-类型:",
-            "- 类型:",
-            "等待执行",
-            "状态:进行中",
-            "状态:等待",
-            "-状态:进行中",
-            "-状态:等待",
-        )
-    ):
-        return True
-    # Status-only lines without real tool output (e.g. "✅步骤1…✅步骤2…")
-    if t.count("✅") >= 2 and not any(
-        marker in t for marker in ("QED", "评分", "pocket", "PDB", "|", "对接", "hERG", "BBB")
-    ):
-        return True
-    if '"pocket_id":' in t or '"molecules":' in t:
-        return True
-    if re.search(r'"\w+"\s*:\s*"', t) and "|" in t:
-        return True
-    return False
+    return is_final_answer_unusable(text)
+
+
+def _has_rich_markdown_report(text: str) -> bool:
+    return has_rich_markdown_report(text)
 
 
 def step_merge_key(step: dict[str, Any]) -> str | None:
@@ -110,10 +118,7 @@ def step_merge_key(step: dict[str, Any]) -> str | None:
 
 
 def merge_live_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Dedupe by tool_call_id / record_id+kind, keep order.
-
-    toolResult 回填时保留原 title/name/input，只更新 status/result/detail。
-    """
+    """Dedupe by tool_call_id / record_id+kind, keep order."""
     out: list[dict[str, Any]] = []
     by_tool: dict[str, int] = {}
     by_rec: dict[str, int] = {}
@@ -197,73 +202,10 @@ def _format_step_status(step: dict[str, Any]) -> str:
     return "已执行"
 
 
-def _is_brief_model_summary(model: str, structured: str) -> bool:
-    m = (model or "").strip()
-    s = (structured or "").strip()
-    if not s:
-        return False
-    if not m or _is_low_quality_final_answer(m):
-        return True
-    if "|" in s and "|" not in m:
-        return True
-    if s.count("\n") >= 3 and m.count("\n") < 2:
-        return True
-    if len(s) > len(m) + 80:
-        return True
-    return False
-
-
-def _is_truncated_final_answer(text: str) -> bool:
-    t = (text or "").strip()
-    if not t:
-        return True
-    if t.endswith(("：", ":", "，", ",", "、", "|", "—", "-", "…")):
-        return True
-    if re.search(r"\*\*[^*]+\*\*\s*$", t):
-        return True
-    if t.count("##") > 0 and len(t) < 200:
-        return True
-    return False
-
-
-def _merge_final_answer(
-    model_final: str,
-    steps: list[dict[str, Any]],
-    skill_name: str | None = None,
-) -> str:
-    """Merge tool-structured output with model prose; never drop the richer block."""
-    final = strip_process_runtime_noise((model_final or "").strip())
-    synthesized = ""
-    if not skill_name or should_emit_early_final(steps, skill_name):
-        synthesized = (synthesize_final_from_steps(steps, skill_name) or "").strip()
-    if not synthesized:
-        return final
-    if not final or _is_low_quality_final_answer(final):
-        return synthesized
-    if synthesized in final:
-        return final
-    if final in synthesized:
-        return synthesized
-    if _is_truncated_final_answer(final) and not _is_truncated_final_answer(synthesized):
-        return synthesized
-    if _is_brief_model_summary(final, synthesized):
-        return synthesized
-    if len(synthesized) > len(final) + 120 and _is_truncated_final_answer(final):
-        return synthesized
-    return f"{synthesized}\n\n{final}"
-
-
-def rebuild_reply_with_live_steps(
-    raw_reply: str,
-    live_steps: list[dict[str, Any]],
-    skill_name: str | None = None,
-) -> str:
-    """Prefer full live thinking/tool trail; keep model's final answer."""
-    steps = merge_live_steps(live_steps)
-    final = extract_final_answer(raw_reply)
+def build_process_section_markdown(steps: list[dict[str, Any]]) -> str:
+    """仅构建 ## 分析过程（过程过滤规则）。"""
     if not steps:
-        return raw_reply
-
+        return ""
     tool_count = sum(1 for s in steps if is_billable_action_step(s))
     lines = [
         "## 分析过程",
@@ -278,12 +220,20 @@ def rebuild_reply_with_live_steps(
         if name and name == title:
             name = title if is_tool else ""
         status = _format_step_status(step)
-        inp = strip_paths((step.get("input") or "").strip())
-        result = strip_process_runtime_noise(strip_paths((step.get("result") or "").strip()))
-        detail = strip_process_runtime_noise(strip_paths((step.get("detail") or "").strip()))
-        if kind == "thinking" and detail:
-            inp = detail[:300] + ("…" if len(detail) > 300 else "")
-            result = inp
+        raw_detail = strip_paths((step.get("detail") or "").strip())
+        if kind == "thinking":
+            detail = raw_detail
+            inp = step.get("input") or ""
+            result = step.get("result") or ""
+            one_line = " ".join(detail.split()) if detail else " ".join(str(inp or result).split())
+            if len(one_line) > 120:
+                one_line = one_line[:117] + "…"
+            inp = one_line
+            result = one_line
+        else:
+            inp = strip_paths(sanitize_process_step_text((step.get("input") or "").strip()))
+            result = sanitize_process_step_text(strip_paths((step.get("result") or "").strip()))
+            detail = sanitize_process_step_text(strip_paths(raw_detail))
         if kind == "skill":
             type_label = "技能"
         elif kind == "web":
@@ -300,10 +250,28 @@ def rebuild_reply_with_live_steps(
         lines.append(f"- 结果摘要: {result}")
         lines.append(f"- 详情: {detail}")
         lines.append("")
-
-    merged_final = _merge_final_answer(final, steps, skill_name)
-    if merged_final.strip():
-        lines.append("## 最终回答")
-        lines.append("")
-        lines.append(merged_final)
     return "\n".join(lines).strip() + "\n"
+
+
+def rebuild_reply_with_live_steps(
+    raw_reply: str,
+    live_steps: list[dict[str, Any]],
+    skill_name: str | None = None,
+) -> str:
+    """Compose persisted reply: process section from steps + final from model stream."""
+    steps = merge_live_steps(live_steps)
+    if not steps:
+        return raw_reply
+
+    process_md = build_process_section_markdown(steps)
+    model_final = extract_final_answer(raw_reply)
+    final_body = resolve_final_answer(model_final, steps, skill_name)
+
+    parts: list[str] = []
+    if process_md.strip():
+        parts.append(process_md.strip())
+    if final_body.strip():
+        parts.append("## 最终回答")
+        parts.append("")
+        parts.append(final_body.strip())
+    return "\n".join(parts).strip() + "\n"

@@ -5,6 +5,7 @@
 import {
   deriveLiveActivity,
   deriveLiveActivityPhase,
+  isAnalysisComplete,
   isLivePanelTailFormatting,
 } from '../frontend/src/utils/liveActivity'
 import type { LiveProcessStep } from '../frontend/src/api/client'
@@ -67,6 +68,26 @@ assert(!tailActivity.title.includes('结果已就绪'), 'live panel never shows 
 assert(
   !isLivePanelTailFormatting('', tailSteps),
   'no tail formatting before stream final',
+)
+
+const preambleOnly = '好的，我来帮您分析这个分子的对接结果。'
+assert(
+  !isAnalysisComplete(preambleOnly, []),
+  'preamble without marker or steps must not early-finalize',
+)
+assert(
+  isAnalysisComplete(readyContent, tailSteps),
+  'explicit final marker completes when tools idle',
+)
+const richBodyNoMarker =
+  '| 对接分数 | -7.5 kcal/mol |\n| --- | --- |\n\n结合能较好，建议进一步优化侧链。'
+assert(
+  !isAnalysisComplete(richBodyNoMarker, []),
+  'rich body without marker or completed tools must not early-finalize',
+)
+assert(
+  isAnalysisComplete(richBodyNoMarker, tailSteps),
+  'rich body with completed tools may finalize without marker',
 )
 
 console.log('='.repeat(60))

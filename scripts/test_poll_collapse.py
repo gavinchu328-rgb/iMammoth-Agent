@@ -112,7 +112,7 @@ def test_prune_target_discovery_debug_steps():
     ]
     out = polish_ai4drug_exec_steps(steps, reply=reply)
     think = [s for s in out if s.get("kind") == "thinking"]
-    assert len(think) == 0, think
+    assert len(think) == 2, think
     target = [s for s in out if s.get("name") == "靶点发现"][0]
     assert "124" in target["result"]
     assert "KCNJ11" in target["result"]
@@ -149,8 +149,10 @@ def test_runtime_noise_not_in_final_display_block():
         step,
     ]
     pruned = polish_ai4drug_exec_steps(noisy_live)
-    assert len(pruned) == 1, pruned
-    assert "Command still running" not in str(pruned[0].get("detail") or ""), pruned
+    assert len(pruned) == 2, pruned
+    assert any(s.get("kind") == "thinking" for s in pruned), pruned
+    target = [s for s in pruned if s.get("name") == "靶点发现"][0]
+    assert "Command still running" not in str(target.get("detail") or ""), pruned
 
 
 def test_exec_vina_config_not_in_final_display():
@@ -224,7 +226,7 @@ def test_chinese_runtime_noise_filtered():
             },
         ]
     )
-    assert all(s.get("kind") != "thinking" for s in steps), steps
+    assert any(s.get("kind") == "thinking" for s in steps), steps
 
 
 def test_should_emit_early_final_retrosynthesis():

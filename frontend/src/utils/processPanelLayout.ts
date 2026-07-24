@@ -7,12 +7,10 @@ export type ProcessPanelLayoutMode = 'live' | 'final'
 
 /** 全局尺寸 token（Tailwind class 片段） */
 export const PROCESS_PANEL_LAYOUT = {
-  /** 流式正文区（Live 面板上方） */
-  streamContentMax: 'max-h-[min(38vh,16rem)]',
   /** Live：上方有流式正文，或收尾整理阶段 */
-  liveStepListCompact: 'max-h-[min(44vh,15rem)]',
+  liveStepListCompact: 'max-h-[min(55vh,28rem)]',
   /** Live：仅过程框、无流式正文（执行中主视图） */
-  liveStepListDefault: 'max-h-[min(52vh,22rem)]',
+  liveStepListDefault: 'max-h-[min(65vh,36rem)]',
   /** 最终消息中的过程步骤列表 */
   finalStepListMax: 'max-h-[min(48vh,18rem)]',
 } as const
@@ -74,8 +72,9 @@ export function getProcessPanelHeaderRowClassName(): string {
   return 'flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-800'
 }
 
+/** 执行中流式正文：不限高、不内滚，完整展示在过程框外。 */
 export function getLiveStreamContentClassName(): string {
-  return `assistant-prose ${PROCESS_PANEL_LAYOUT.streamContentMax} ${SCROLL} text-[15px] leading-relaxed text-slate-800`
+  return 'assistant-prose w-full text-[15px] leading-relaxed text-slate-800'
 }
 
 export interface LiveStepListLayoutOptions {
@@ -100,5 +99,5 @@ export function getFinalStepListClassName(): string {
 }
 
 export function getLiveActivityFooterClassName(): string {
-  return 'sticky bottom-0 z-10 -mx-1 mt-3 border-t border-slate-200/80 bg-slate-50/95 px-1 pt-3 backdrop-blur-sm'
+  return 'sticky bottom-0 z-10 -mx-1 mt-3 border-t border-slate-200/80 bg-slate-50/95 px-3 py-3 backdrop-blur-sm'
 }

@@ -61,6 +61,11 @@ function stepBodyLength(step: Pick<ProcessStep, 'detail' | 'resultSummary' | 'in
 function mergeDisplaySteps(parsed: ProcessStep[], live: ProcessStep[]): ProcessStep[] {
   if (!live.length) return parsed
   if (!parsed.length) return live
+  const parsedHasThinking = parsed.some((s) => s.type === '思考')
+  const liveHasThinking = live.some((s) => s.type === '思考')
+  if (live.length > parsed.length || (liveHasThinking && !parsedHasThinking)) {
+    return live.map((s, i) => ({ ...s, index: i + 1 }))
+  }
   const len = Math.max(parsed.length, live.length)
   return Array.from({ length: len }, (_, i) => {
     const p = parsed[i]

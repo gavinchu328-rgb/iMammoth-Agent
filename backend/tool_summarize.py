@@ -1699,7 +1699,8 @@ def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
         detail = str(out.get("detail") or out.get("result") or out.get("input") or "").strip()
         if detail:
             out["detail"] = detail
-            preview = detail if len(detail) <= 300 else detail[:297] + "…"
+            one_line = " ".join(detail.split())
+            preview = one_line if len(one_line) <= 120 else one_line[:117] + "…"
             out["input"] = preview
             out["result"] = preview
         return out
@@ -1838,31 +1839,6 @@ def is_auxiliary_tool_step(step: dict[str, Any]) -> bool:
     name = str(step.get("name") or "")
     title = str(step.get("title") or "")
     return name in _AUX_TOOL_NAMES or title in _AUX_TOOL_NAMES
-
-
-_DEBUG_THINKING_MARKERS = (
-    "轮询",
-    "JSON",
-    "json",
-    "解析",
-    "日志",
-    "进程仍在",
-    "命令仍在",
-    "仍在运行",
-    "需要轮询",
-    "让我再等",
-    "再轮询",
-    "session_id 不对",
-    "Top-level keys",
-    "targets_top",
-    "enhanced_targets",
-    "python",
-    "模块",
-    "报告",
-    "完整的目标",
-    "顶级目标",
-    "<tool_call",
-)
 
 
 def _looks_like_json_leak(text: str) -> bool:
@@ -2173,39 +2149,21 @@ def _drop_auxiliary_tools_when_primary_done(steps: list[dict[str, Any]]) -> list
 
 
 def _drop_debug_thinking_when_primary_done(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """主工具已成功时，隐藏轮询/JSON 解析类思考步骤。"""
-    if not _ai4drug_primary_succeeded(steps):
-        return steps
-    trivial = frozenset({"准备开始执行调用。", "准备开始执行调用"})
+    """思考步骤完整保留；仅跳过空内容。"""
     out: list[dict[str, Any]] = []
     for step in steps:
         if str(step.get("kind") or "") != "thinking":
             out.append(step)
             continue
         text = str(step.get("detail") or step.get("result") or step.get("input") or "").strip()
-        if not text or text in trivial:
-            continue
-        if any(marker in text for marker in _DEBUG_THINKING_MARKERS):
-            continue
-        out.append(step)
+        if text:
+            out.append(step)
     return out
 
 
 def _drop_thinking_for_single_skill(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """单技能会话（仅一个 AI4Drug 工具）完成后不展示思考步骤。"""
-    if not _ai4drug_primary_succeeded(steps):
-        return steps
-    ai4_tools = [
-        s
-        for s in steps
-        if str(s.get("kind") or "") == "tool"
-        and str(s.get("name") or "") in _AI4DRUG_TOOL_LABELS.values()
-        and not _step_looks_failed(s)
-        and not _looks_like_json_leak(str(s.get("result") or ""))
-    ]
-    if len(ai4_tools) != 1:
-        return steps
-    return [s for s in steps if str(s.get("kind") or "") != "thinking"]
+    """Deprecated: 单技能会话也应展示实质性思考步骤，仅由 _drop_debug_thinking_when_primary_done 过滤噪声。"""
+    return steps
 
 
 def _step_looks_failed(step: dict[str, Any]) -> bool:
@@ -2776,18 +2734,6 @@ def prune_live_display_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]
             text = str(step.get("detail") or step.get("result") or step.get("input") or "").strip()
             if not text:
                 continue
-            if is_process_runtime_noise(text):
-                continue
-            if any(
-                token in text
-                for token in (
-                    "Command still running",
-                    "Process still running",
-                    "use process (list/poll",
-                    "session kind-",
-                )
-            ):
-                continue
         if name in _PROCESS_POLL_NAMES or title in _PROCESS_POLL_NAMES:
             if str(step.get("record_id") or "") != _PROCESS_POLL_RECORD_ID:
                 continue
@@ -2798,7 +2744,6 @@ def prune_live_display_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]
         out.append(step)
     out = collapse_process_poll_steps(out)
     out = _drop_debug_thinking_when_primary_done(out)
-    out = _drop_thinking_for_single_skill(out)
     out = _drop_auxiliary_tools_when_primary_done(out)
     return out
 

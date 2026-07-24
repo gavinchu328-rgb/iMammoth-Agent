@@ -1,5 +1,5 @@
 import { isJsonLikeToolOutput } from './processStepUtils'
-import { isLowQualityFinalAnswer } from './parseProcessLog'
+import { isFinalAnswerUnusable, sanitizeFinalAnswerText } from './contentFilters'
 
 const PROCESS_MARKERS = ['## 分析过程', '##分析过程', '### 步骤', '###步骤'] as const
 const FINAL_MARKERS = ['## 最终回答', '##最终回答'] as const
@@ -79,8 +79,8 @@ export function stripStreamingNoise(content: string): string {
     let final = raw.slice(finalIdx + marker.length)
     const procInFinal = findFirstMarker(final, PROCESS_MARKERS)
     if (procInFinal >= 0) final = final.slice(0, procInFinal)
-    final = final.trim()
-    if (final && !looksLikeProcessDump(final) && !isLowQualityFinalAnswer(final)) {
+    final = sanitizeFinalAnswerText(final)
+    if (final && !isFinalAnswerUnusable(final)) {
       return final
     }
     return ''
@@ -89,8 +89,8 @@ export function stripStreamingNoise(content: string): string {
   let procIdx = findFirstMarker(raw, PROCESS_MARKERS)
   if (procIdx < 0 && looksLikeCollapsedProcessDump(raw)) procIdx = 0
   if (procIdx >= 0) {
-    const preamble = raw.slice(0, procIdx).trim()
-    return preamble && !looksLikeProcessDump(preamble) ? preamble : ''
+    const preamble = sanitizeFinalAnswerText(raw.slice(0, procIdx).trim())
+    return preamble && !isFinalAnswerUnusable(preamble) ? preamble : ''
   }
 
   if (looksLikeProcessDump(raw)) return ''
@@ -107,8 +107,8 @@ export function resolveStreamingDisplayContent(
   const cleaned = stripStreamingNoise(raw)
 
   const pickFinal = (text: string): string | undefined => {
-    const t = text.trim()
-    if (!t || looksLikeProcessDump(t) || isLowQualityFinalAnswer(t)) return undefined
+    const t = sanitizeFinalAnswerText(text.trim())
+    if (!t || isFinalAnswerUnusable(t)) return undefined
     return t
   }
 
@@ -129,14 +129,20 @@ export function resolveStreamingDisplayContent(
 }
 
 /** 流式正文是否已进入「最终回答」阶段（兼容后端剥掉 ## 标记的情况）。 */
-export function isStreamingFinalReady(content: string): boolean {
+export function hasExplicitFinalMarker(content: string): boolean {
   const raw = (content || '').trim()
   if (!raw) return false
   const finalIdx = findFirstMarker(raw, FINAL_MARKERS)
-  if (finalIdx >= 0) {
-    const marker = FINAL_MARKERS.find((m) => raw.indexOf(m) === finalIdx) || FINAL_MARKERS[0]
-    return raw.slice(finalIdx + marker.length).trim().length >= 8
-  }
-  const cleaned = stripStreamingNoise(raw)
-  return cleaned.length >= 8 && !looksLikeProcessDump(cleaned) && !isLowQualityFinalAnswer(cleaned)
+  if (finalIdx < 0) return false
+  const marker = FINAL_MARKERS.find((m) => raw.indexOf(m) === finalIdx) || FINAL_MARKERS[0]
+  return raw.slice(finalIdx + marker.length).trim().length >= 8
+}
+
+/** 流式正文是否已进入「最终回答」阶段（兼容后端剥掉 ## 标记的情况）。 */
+export function isStreamingFinalReady(content: string): boolean {
+  const raw = (content || '').trim()
+  if (!raw) return false
+  if (hasExplicitFinalMarker(raw)) return true
+  const cleaned = sanitizeFinalAnswerText(stripStreamingNoise(raw))
+  return cleaned.length >= 8 && !isFinalAnswerUnusable(cleaned)
 }

@@ -5,9 +5,8 @@ import {
   deriveLiveActivity,
   hasRunningProcessSteps,
   isLivePanelTailFormatting,
-  isStreamPhaseComplete,
 } from '../utils/liveActivity'
-import { buildFallbackFinalAnswer, isLowQualityFinalAnswer } from '../utils/parseProcessLog'
+import { isFinalAnswerUnusable } from '../utils/contentFilters'
 import {
   looksLikeModelPipelineChecklist,
   looksLikePartialProcessStream,
@@ -57,10 +56,10 @@ function StepBadge({ kind, name, title }: { kind: LiveProcessStep['kind']; name?
 
 function PulseDot({ active = true }: { active?: boolean }) {
   if (!active) {
-    return <span className="mt-0.5 h-3 w-3 shrink-0 rounded-full bg-emerald-500" />
+    return <span className="h-3 w-3 shrink-0 rounded-full bg-emerald-500" />
   }
   return (
-    <span className="relative mt-0.5 flex h-3 w-3 shrink-0">
+    <span className="relative flex h-3 w-3 shrink-0">
       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4BA4F8] opacity-75" />
       <span className="relative inline-flex h-3 w-3 rounded-full bg-[#4BA4F8]" />
     </span>
@@ -77,7 +76,7 @@ function ActivityFooter({
   const titleClass = executing ? 'text-[#1d6fbf]' : 'text-slate-700'
 
   return (
-    <div className="flex items-start gap-2.5 text-sm">
+    <div className="flex items-center gap-2.5 text-sm">
       <PulseDot active={executing} />
       <div className="min-w-0 flex-1">
         <p className={`font-medium leading-snug ${titleClass}`}>{activity.title}</p>
@@ -99,53 +98,27 @@ export default function LiveProcessPanel({
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
-  const streamFinalReady = isStreamPhaseComplete(content || '', streamRaw)
   const hasRunningSteps = hasRunningProcessSteps(steps)
   const isTailFormatting = isLivePanelTailFormatting(content || '', steps, {
     streamRaw,
     awaitingFinalize,
   })
   const displaySteps = useMemo(() => sortStepsForDisplay(steps), [steps])
-  const resultSteps = useMemo(
-    () =>
-      displaySteps.map((step, i) => ({
-        index: i + 1,
-        title: step.title || step.name || '工具',
-        type:
-          step.kind === 'skill' ? ('技能' as const) : step.kind === 'thinking' ? ('思考' as const) : ('工具' as const),
-        status: step.status || '已执行',
-        name: step.name || '',
-        inputSummary: stripProcessPaths(step.input || ''),
-        resultSummary: stripProcessPaths(step.result || ''),
-        detail: stripProcessPaths(step.detail || ''),
-        displayBlock: (step.display_block || '').trim(),
-      })),
-    [displaySteps],
-  )
-  const fallbackAnswer = useMemo(() => buildFallbackFinalAnswer(resultSteps), [resultSteps])
   const summaryAbove = useMemo(() => {
-    const fromStream =
-      content && !isLowQualityFinalAnswer(content) ? content.trim() : streamFinalReady ? '' : (content || '').trim()
-    if (streamFinalReady && !hasRunningSteps) {
-      return fromStream || fallbackAnswer.trim() || ''
-    }
-    // 执行中（含对接盒等多步技能）：上方只展示模型流式正文，步骤摘要留给过程框，避免双层内容抢高度
-    return fromStream
-  }, [content, streamFinalReady, fallbackAnswer, hasRunningSteps])
+    const raw = (streamRaw || content || '').trim()
+    if (!raw) return ''
+    const cleaned = stripStreamingNoise(raw)
+    if (cleaned && !isFinalAnswerUnusable(cleaned)) return cleaned
+    if (looksLikePartialProcessStream(raw)) return ''
+    return ''
+  }, [content, streamRaw])
 
   const summaryDisplay = useMemo(() => {
     const text = summaryAbove.trim()
     if (!text) return ''
-    const cleaned = stripStreamingNoise(text)
-    if (looksLikeModelPipelineChecklist(cleaned || text)) return ''
-    // 过程面板已展示步骤时，不再重复显示模型流水线 checklist
-    if (hasRunningSteps && displaySteps.length > 0 && (looksLikeModelPipelineChecklist(text) || !cleaned)) {
-      return ''
-    }
-    if (cleaned) return cleaned
-    if (looksLikePartialProcessStream(text)) return ''
+    if (looksLikeModelPipelineChecklist(text)) return ''
     return text
-  }, [summaryAbove, hasRunningSteps, displaySteps.length])
+  }, [summaryAbove])
 
   const activity = useMemo(
     () => deriveLiveActivity(steps, skillName, { streamFinalReady: isTailFormatting }),

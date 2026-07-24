@@ -76,6 +76,25 @@ def test_rebuild_reply_keeps_thinking_detail() -> None:
     assert "第二段思考" in reply
 
 
+def test_rebuild_reply_keeps_full_thinking_detail() -> None:
+    steps = [
+        {
+            "kind": "thinking",
+            "title": "深度思考",
+            "name": "深度思考",
+            "status": "done",
+            "detail": LONG_THINKING,
+            "result": LONG_THINKING[:120],
+            "input": LONG_THINKING[:120],
+            "thinking_seq": 0,
+        }
+    ]
+    reply = rebuild_reply_with_live_steps("## 最终回答\n\n完成。", steps)
+    assert LONG_THINKING in reply
+    assert "第二段思考" in reply
+    assert "JSON 结果" in reply
+
+
 def test_thinking_not_billable_mcp() -> None:
     from tool_summarize import is_billable_action_step, is_mcp_tool_step
 
@@ -90,7 +109,7 @@ def test_thinking_not_billable_mcp() -> None:
 
 
 def test_early_ligand_final() -> None:
-    from reply_rebuild import synthesize_early_final_from_steps
+    from skill_display import synthesize_early_final_from_steps
 
     steps = [
         {
@@ -103,16 +122,41 @@ def test_early_ligand_final() -> None:
         }
     ]
     block = synthesize_early_final_from_steps(steps, "配体准备")
-    assert "配体准备" in block
+    assert "已制备 1 个配体" in block
     assert "EGFR_3W2S_pocket1_mol0" in block
+
+
+def test_single_skill_target_discovery_keeps_thinking() -> None:
+    steps = [
+        {
+            "kind": "thinking",
+            "name": "深度思考",
+            "status": "done",
+            "detail": LONG_THINKING,
+            "result": LONG_THINKING[:120],
+        },
+        {
+            "kind": "tool",
+            "name": "靶点发现",
+            "status": "done",
+            "result": "发现 10 个靶点，Top EGFR",
+            "detail": "EGFR · 0.888",
+        },
+    ]
+    out = polish_ai4drug_exec_steps(steps)
+    think = [s for s in out if s.get("kind") == "thinking"]
+    assert len(think) == 1, think
+    assert LONG_THINKING in str(think[0].get("detail") or "")
 
 
 def main() -> None:
     test_polish_preserves_thinking()
     test_merge_keeps_longer_thinking()
     test_rebuild_reply_keeps_thinking_detail()
+    test_rebuild_reply_keeps_full_thinking_detail()
     test_thinking_not_billable_mcp()
     test_early_ligand_final()
+    test_single_skill_target_discovery_keeps_thinking()
     print("thinking_preserve OK")
 
 

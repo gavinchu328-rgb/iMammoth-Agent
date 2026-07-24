@@ -1,5 +1,5 @@
 import type { LiveProcessStep } from '../api/client'
-import { isStreamingFinalReady } from './streamingDisplay'
+import { hasExplicitFinalMarker, isStreamingFinalReady } from './streamingDisplay'
 import { formatExecutedToolLabel, isActionStep } from './processStepUtils'
 
 function stripPaths(text: string): string {
@@ -57,9 +57,21 @@ export function hasReplyReady(content: string): boolean {
   return isStreamingFinalReady(content)
 }
 
+function hasCompletedActionSteps(steps: LiveProcessStep[]): boolean {
+  return steps.some(
+    (s) =>
+      (s.kind === 'tool' || s.kind === 'skill') &&
+      s.status !== 'running' &&
+      !isRuntimeWaitStep(s),
+  )
+}
+
 /** Stream final is ready and no tool is still running. */
 export function isAnalysisComplete(content: string, steps: LiveProcessStep[]): boolean {
-  return hasReplyReady(content) && !hasRunningProcessSteps(steps)
+  if (!hasReplyReady(content) || hasRunningProcessSteps(steps)) return false
+  if (hasExplicitFinalMarker(content)) return true
+  // 无明确「最终回答」标记时，须至少完成一个工具/技能步骤，避免前言触发过早 finalize
+  return hasCompletedActionSteps(steps)
 }
 
 /** Stream final is ready (display and/or raw SSE buffer). */

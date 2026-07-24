@@ -144,7 +144,6 @@ export function thinkingFullText(
 export function thinkingSummaryLine(text: string, maxLen = 96): string {
   const normalized = text.replace(/\r\n/g, '\n').trim()
   if (!normalized) return '整理思路中…'
-  if (isProcessRuntimeNoise(normalized)) return '整理思路中…'
   const firstParagraph = normalized.split(/\n\s*\n/)[0]?.trim() || normalized
   const lines = firstParagraph
     .split('\n')

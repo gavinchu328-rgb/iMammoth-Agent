@@ -3,14 +3,17 @@ import { api } from '../api/client'
 import type { ChatStreamSession, LiveProcessStep, Message, SelectedSkillHint, Session } from '../api/client'
 import { useApiRetry } from './useApiRetry'
 import { newId } from '../utils/id'
-import { hasReplyReady, isAnalysisComplete } from '../utils/liveActivity'
-import { parseProcessLog, resolveDisplayAnswer, type SummaryStep } from '../utils/parseProcessLog'
+import { hasReplyReady } from '../utils/liveActivity'
+import { isLowQualityFinalAnswer, parseProcessLog } from '../utils/parseProcessLog'
 import {
   extractReplyFromSnapshot,
   RESUME_INCOMPLETE_ERROR,
+  RESUME_PARTIAL_WARNING,
+  shouldPreferProcessLogReply,
   shouldResumeInProgress,
 } from '../utils/processLogResume'
 import { mergeProcessStep } from '../utils/processSteps'
+import { resolveSkillForTurn } from '../utils/skillRouting'
 import { frontendTimeoutMs } from '../utils/streamBudget'
 
 export type StreamingState = {
@@ -18,26 +21,6 @@ export type StreamingState = {
   steps: LiveProcessStep[]
   skillName?: string
   skillCategory?: string
-}
-
-function liveStepsToSummarySteps(steps: LiveProcessStep[]): SummaryStep[] {
-  return steps.map((step) => ({
-    type: step.kind === 'skill' ? '技能' : step.kind === 'thinking' ? '思考' : '工具',
-    title: step.title || step.name || '工具',
-    name: step.name || '',
-    resultSummary: step.result || '',
-    detail: step.detail || '',
-    displayBlock: step.display_block,
-  }))
-}
-
-function buildEarlyFinalizeReply(content: string, steps: LiveProcessStep[]): string {
-  const parsed = parseProcessLog(content)
-  const summarySteps = liveStepsToSummarySteps(steps)
-  const finalBody = resolveDisplayAnswer(parsed, summarySteps)
-  if (parsed.hasProcess && parsed.finalAnswer.trim()) return content
-  if (finalBody.trim()) return `## 最终回答\n\n${finalBody}\n`
-  return content
 }
 
 function buildStoppedReply(content: string): string {
@@ -49,6 +32,18 @@ function buildStoppedReply(content: string): string {
     reply = `${reply.trim()}\n\n（已停止生成）`
   }
   return reply
+}
+
+function enrichMessagesWithProcessLog(messages: Message[], steps: LiveProcessStep[]): Message[] {
+  if (!steps.length) return messages
+  const lastAssistantIdx = messages.map((m, i) => (m.role === 'assistant' ? i : -1)).filter((i) => i >= 0).pop()
+  if (lastAssistantIdx == null) return messages
+  return messages.map((m, i) => {
+    if (i !== lastAssistantIdx || m.role !== 'assistant') return m
+    const existing = m.process_steps?.length ?? 0
+    if (existing >= steps.length) return m
+    return { ...m, process_steps: steps }
+  })
 }
 
 export function useChat(initialSessionId?: string) {
@@ -63,15 +58,15 @@ export function useChat(initialSessionId?: string) {
   const activeSessionIdRef = useRef<string | undefined>(undefined)
   const userStopRef = useRef(false)
   const requestEpochRef = useRef(0)
-  const finalizedEarlyRef = useRef(false)
+  const finalizedRef = useRef(false)
 
   const activeSkillRef = useRef<SelectedSkillHint | undefined>(undefined)
   const userTurnRef = useRef(0)
 
   const finalizeAssistantReply = useCallback(
     (reply: string, processSteps: LiveProcessStep[], ownsRequest: () => boolean) => {
-      if (!ownsRequest() || finalizedEarlyRef.current) return
-      finalizedEarlyRef.current = true
+      if (!ownsRequest() || finalizedRef.current) return
+      finalizedRef.current = true
       const assistantMsg: Message = {
         id: newId(),
         role: 'assistant',
@@ -91,18 +86,6 @@ export function useChat(initialSessionId?: string) {
       setLoading(false)
     },
     [],
-  )
-
-  const tryEarlyShowFinal = useCallback(
-    (content: string, ownsRequest: () => boolean) => {
-      if (!ownsRequest() || finalizedEarlyRef.current) return
-      const steps = liveStepsRef.current
-      if (!isAnalysisComplete(content, steps)) return
-      const reply = buildEarlyFinalizeReply(content, steps)
-      if (!hasReplyReady(reply)) return
-      finalizeAssistantReply(reply, steps, ownsRequest)
-    },
-    [finalizeAssistantReply],
   )
 
   const buildStreamHandlers = useCallback(
@@ -129,7 +112,6 @@ export function useChat(initialSessionId?: string) {
             ? { ...prev, content: prev.content + chunk }
             : { content: chunk, steps: [] }
           streamingContentRef.current = next.content
-          tryEarlyShowFinal(next.content, ownsRequest)
           return next
         })
       },
@@ -137,20 +119,12 @@ export function useChat(initialSessionId?: string) {
         if (!ownsRequest()) return
         liveStepsRef.current = mergeProcessStep(liveStepsRef.current, step)
         const steps = liveStepsRef.current
-        setStreaming((prev) => {
-          const next = prev ? { ...prev, steps } : { content: '', steps }
-          if (prev?.content) tryEarlyShowFinal(prev.content, ownsRequest)
-          return next
-        })
+        setStreaming((prev) => (prev ? { ...prev, steps } : { content: '', steps }))
       },
       onSteps: (steps: LiveProcessStep[]) => {
         if (!ownsRequest()) return
         liveStepsRef.current = steps
-        setStreaming((prev) => {
-          const next = prev ? { ...prev, steps } : { content: '', steps }
-          if (prev?.content) tryEarlyShowFinal(prev.content, ownsRequest)
-          return next
-        })
+        setStreaming((prev) => (prev ? { ...prev, steps } : { content: '', steps }))
       },
       onError: (message: string) => {
         if (!ownsRequest()) return
@@ -177,21 +151,10 @@ export function useChat(initialSessionId?: string) {
         }
         const processSteps =
           (payload.steps && payload.steps.length > 0 ? payload.steps : liveStepsRef.current) ?? []
-        if (!finalizedEarlyRef.current) {
-          finalizeAssistantReply(reply, processSteps, ownsRequest)
-        } else if (reply) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1]
-            if (last?.role !== 'assistant') return prev
-            const stepsChanged =
-              JSON.stringify(last.process_steps ?? []) !== JSON.stringify(processSteps)
-            if (last.content === reply && !stepsChanged) return prev
-            return [...prev.slice(0, -1), { ...last, content: reply, process_steps: processSteps }]
-          })
-        }
+        finalizeAssistantReply(reply, processSteps, ownsRequest)
       },
     }),
-    [finalizeAssistantReply, sessionId, tryEarlyShowFinal],
+    [finalizeAssistantReply, sessionId],
   )
 
   const recoverIncompleteReply = useCallback(
@@ -201,20 +164,20 @@ export function useChat(initialSessionId?: string) {
       tailHandlers?: ReturnType<typeof buildStreamHandlers>,
       signal?: AbortSignal,
     ): Promise<boolean> => {
-      if (!ownsRequest() || finalizedEarlyRef.current) return finalizedEarlyRef.current
+      if (!ownsRequest() || finalizedRef.current) return finalizedRef.current
 
       try {
         let snap = await api.getProcessLog(sid)
-        if (!ownsRequest() || finalizedEarlyRef.current) return finalizedEarlyRef.current
+        if (!ownsRequest() || finalizedRef.current) return finalizedRef.current
 
         if (snap.in_progress && tailHandlers && signal) {
           await api.tailProcessLog(sid, tailHandlers, signal, snap.log_offset)
           snap = await api.getProcessLog(sid)
         }
 
-        if (!ownsRequest() || finalizedEarlyRef.current) return finalizedEarlyRef.current
+        if (!ownsRequest() || finalizedRef.current) return finalizedRef.current
 
-        if (snap.reply?.trim()) {
+        if (snap.reply?.trim() && !isLowQualityFinalAnswer(snap.reply)) {
           finalizeAssistantReply(snap.reply, snap.steps ?? liveStepsRef.current, ownsRequest)
           return true
         }
@@ -228,7 +191,7 @@ export function useChat(initialSessionId?: string) {
       } catch (e) {
         console.error('恢复对话结果失败', e)
       }
-      return finalizedEarlyRef.current
+      return finalizedRef.current
     },
     [finalizeAssistantReply, buildStreamHandlers],
   )
@@ -274,7 +237,7 @@ export function useChat(initialSessionId?: string) {
         liveStepsRef.current = steps
         streamingContentRef.current = content
         activeSessionIdRef.current = id
-        finalizedEarlyRef.current = false
+        finalizedRef.current = false
         setLoading(true)
         setStreaming({ content, steps })
         try {
@@ -284,13 +247,21 @@ export function useChat(initialSessionId?: string) {
             setError(e instanceof Error ? e.message : '恢复过程日志失败')
           }
         }
-        if (ownsRequest() && !finalizedEarlyRef.current) {
+        if (ownsRequest() && !finalizedRef.current) {
           await recoverIncompleteReply(id, ownsRequest, handlers, controller.signal)
         }
-        if (ownsRequest() && !finalizedEarlyRef.current) {
-          setStreaming(null)
+        if (ownsRequest() && !finalizedRef.current) {
+          const steps = liveStepsRef.current
+          const content = streamingContentRef.current
+          const hasPartial = steps.length > 0 || content.trim().length > 0
           setLoading(false)
-          setError(RESUME_INCOMPLETE_ERROR)
+          if (hasPartial) {
+            setStreaming({ content, steps })
+            setError(RESUME_PARTIAL_WARNING)
+          } else {
+            setStreaming(null)
+            setError(RESUME_INCOMPLETE_ERROR)
+          }
         }
         return
       }
@@ -324,7 +295,36 @@ export function useChat(initialSessionId?: string) {
       const session = await api.getSession(id)
       if (requestEpoch !== requestEpochRef.current) return
 
-      const msgs = session.messages ?? []
+      let msgs = session.messages ?? []
+      try {
+        const snap = await api.getProcessLog(id)
+        if (requestEpoch !== requestEpochRef.current) return
+        msgs = enrichMessagesWithProcessLog(msgs, snap.steps ?? [])
+        const healedReply = snap.reply?.trim()
+        if (healedReply && snap.done && !snap.in_progress) {
+          const lastAssistantIdx = msgs
+            .map((m, i) => (m.role === 'assistant' ? i : -1))
+            .filter((i) => i >= 0)
+            .pop()
+          if (lastAssistantIdx != null) {
+            const dbContent = msgs[lastAssistantIdx].content || ''
+            if (shouldPreferProcessLogReply(dbContent, healedReply)) {
+              msgs = msgs.map((m, i) =>
+                i === lastAssistantIdx
+                  ? {
+                      ...m,
+                      content: healedReply,
+                      process_steps: snap.steps?.length ? snap.steps : m.process_steps,
+                    }
+                  : m,
+              )
+            }
+          }
+        }
+      } catch {
+        // 过程日志不可用时仍展示会话正文
+      }
+
       const awaitingReply = msgs[msgs.length - 1]?.role === 'user'
 
       setSessionId(session.id)
@@ -334,7 +334,7 @@ export function useChat(initialSessionId?: string) {
       setError(null)
       setLoading(false)
       liveStepsRef.current = []
-      finalizedEarlyRef.current = false
+      finalizedRef.current = false
 
       // Resume tail stream in background — awaiting it here blocks ChatPage
       // "加载对话中…" until the SSE closes (can be minutes for in-flight runs).
@@ -357,9 +357,14 @@ export function useChat(initialSessionId?: string) {
       const requestEpoch = ++requestEpochRef.current
       const ownsRequest = () => requestEpoch === requestEpochRef.current
 
-      const skillForTurn = selectedSkill ?? activeSkillRef.current
-      if (selectedSkill) {
-        activeSkillRef.current = selectedSkill
+      const messageText = text.trim().replace(/^undefined+/i, '')
+      if (!messageText) return
+
+      const skillForTurn = resolveSkillForTurn(messageText, selectedSkill, activeSkillRef.current)
+      if (skillForTurn) {
+        activeSkillRef.current = skillForTurn
+      } else {
+        activeSkillRef.current = undefined
       }
       userTurnRef.current += 1
 
@@ -369,7 +374,7 @@ export function useChat(initialSessionId?: string) {
       streamingContentRef.current = ''
       activeSessionIdRef.current = sessionId
       userStopRef.current = false
-      finalizedEarlyRef.current = false
+      finalizedRef.current = false
       setStreaming({
         content: '',
         steps: [],
@@ -382,13 +387,13 @@ export function useChat(initialSessionId?: string) {
       abortRef.current = controller
       let timeoutId = window.setTimeout(
         () => controller.abort(),
-        frontendTimeoutMs(text.trim(), skillForTurn?.name),
+        frontendTimeoutMs(messageText, skillForTurn?.name),
       )
       const resetStreamTimeout = (budgetSec: number) => {
         window.clearTimeout(timeoutId)
         timeoutId = window.setTimeout(
           () => controller.abort(),
-          frontendTimeoutMs(text.trim(), skillForTurn?.name, budgetSec),
+          frontendTimeoutMs(messageText, skillForTurn?.name, budgetSec),
         )
       }
 
@@ -409,13 +414,13 @@ export function useChat(initialSessionId?: string) {
         const userMsg: Message = {
           id: newId(),
           role: 'user',
-          content: text.trim(),
+          content: messageText,
           created_at: new Date().toISOString(),
         }
         setMessages((prev) => [...prev, userMsg])
 
         await api.chatStream(
-          text.trim(),
+          messageText,
           sessionId,
           skillForTurn,
           streamHandlers,
@@ -423,13 +428,13 @@ export function useChat(initialSessionId?: string) {
         )
         resolvedSessionId = resolvedRef.current || resolvedSessionId
 
-        if (ownsRequest() && !finalizedEarlyRef.current && resolvedSessionId) {
+        if (ownsRequest() && !finalizedRef.current && resolvedSessionId) {
           await recoverIncompleteReply(resolvedSessionId, ownsRequest, streamHandlers, controller.signal)
         }
       } catch (e) {
         if (!ownsRequest()) return undefined
         if ((e as Error).name === 'AbortError') {
-          if (userStopRef.current && !finalizedEarlyRef.current) {
+          if (userStopRef.current && !finalizedRef.current) {
             const reply = buildStoppedReply(streamingContentRef.current)
             finalizeAssistantReply(reply, [...liveStepsRef.current], ownsRequest)
           }
@@ -443,7 +448,7 @@ export function useChat(initialSessionId?: string) {
       window.clearTimeout(timeoutId)
       if (!ownsRequest()) return undefined
 
-      if (!finalizedEarlyRef.current) {
+      if (!finalizedRef.current) {
         const sid = resolvedRef.current || resolvedSessionId
         if (sid) {
           await recoverIncompleteReply(sid, ownsRequest, streamHandlers, controller.signal)
@@ -451,7 +456,7 @@ export function useChat(initialSessionId?: string) {
       }
 
       if (!ownsRequest()) return undefined
-      if (!finalizedEarlyRef.current) {
+      if (!finalizedRef.current) {
         if (liveStepsRef.current.length > 0 || streamingContentRef.current.trim()) {
           setError((prev) => prev ?? '连接中断，请刷新页面从历史记录查看结果')
         }
@@ -463,7 +468,7 @@ export function useChat(initialSessionId?: string) {
       if (streamFailed && !userStopRef.current) {
         setMessages((prev) => {
           if (
-            finalizedEarlyRef.current &&
+            finalizedRef.current &&
             prev.length >= 2 &&
             prev[prev.length - 1]?.role === 'assistant'
           ) {
@@ -471,7 +476,7 @@ export function useChat(initialSessionId?: string) {
           }
           return prev.slice(0, -1)
         })
-        finalizedEarlyRef.current = false
+        finalizedRef.current = false
         return undefined
       }
       return resolvedSessionId
@@ -488,7 +493,7 @@ export function useChat(initialSessionId?: string) {
 
     const steps = [...liveStepsRef.current]
     const reply = buildStoppedReply(streamingContentRef.current)
-    if (!finalizedEarlyRef.current) {
+    if (!finalizedRef.current) {
       finalizeAssistantReply(reply, steps, ownsRequest)
     }
 
@@ -522,7 +527,7 @@ export function useChat(initialSessionId?: string) {
     streamingContentRef.current = ''
     activeSessionIdRef.current = undefined
     userStopRef.current = false
-    finalizedEarlyRef.current = false
+    finalizedRef.current = false
     activeSkillRef.current = undefined
     userTurnRef.current = 0
     setSessionId(undefined)

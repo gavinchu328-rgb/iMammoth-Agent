@@ -207,23 +207,6 @@ def read_process_log_snapshot(session_id: str) -> dict[str, Any]:
     raw_steps = active_turn["raw_steps"]
     done_payload = active_turn["done_payload"]
 
-    # 多轮 mammoth_done 时合并各轮 raw_steps，避免后一轮仅思考覆盖工具步骤
-    if sealed_turns:
-        merged_raw: list[dict[str, Any]] = []
-        all_content_parts: list[str] = []
-        for turn in sealed_turns:
-            merged_raw.extend(turn.get("raw_steps") or [])
-            all_content_parts.extend(turn.get("content_parts") or [])
-        merged_raw.extend(raw_steps)
-        all_content_parts.extend(content_parts)
-        raw_steps = merged_raw
-        content_parts = all_content_parts
-        if not done_payload:
-            for turn in reversed(sealed_turns):
-                if turn.get("done_payload"):
-                    done_payload = turn["done_payload"]
-                    break
-
     from reply_rebuild import merge_live_steps
     from tool_summarize import polish_ai4drug_exec_steps
 
@@ -250,11 +233,26 @@ def read_process_log_snapshot(session_id: str) -> dict[str, Any]:
     if synthesized and not reply:
         reply = _synthesize_reply_from_content(content)
 
+    needs_heal_reply = False
+    if content and merged_steps:
+        from content_filters import _final_answer_quality_score
+        from reply_rebuild import extract_final_answer, rebuild_reply_with_live_steps
+
+        healed = rebuild_reply_with_live_steps(content, merged_steps)
+        healed_final = extract_final_answer(healed)
+        saved_final = extract_final_answer(reply)
+        if (
+            healed_final
+            and _final_answer_quality_score(healed_final) > _final_answer_quality_score(saved_final) + 80
+        ):
+            reply = healed
+            needs_heal_reply = done_in_file
+
     return {
         "in_progress": has_activity and not complete,
         "done": complete,
         "done_in_file": done_in_file,
-        "needs_heal": synthesized,
+        "needs_heal": synthesized or needs_heal_reply,
         "content": content,
         "steps": merged_steps,
         "reply": reply,

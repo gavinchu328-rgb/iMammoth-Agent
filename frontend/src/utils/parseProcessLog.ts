@@ -6,7 +6,11 @@ import {
   normalizeAi4DrugToolLabel,
   stripProcessRuntimeNoise,
 } from './processStepUtils'
-import { looksLikeModelPipelineChecklist } from './streamingDisplay'
+import {
+  extractTrailingModelFinal,
+  isFinalAnswerUnusable,
+  sanitizeFinalAnswerText,
+} from './contentFilters'
 
 export type ProcessStep = {
   index: number
@@ -28,28 +32,7 @@ export type ParsedAssistantReply = {
   raw: string
 }
 
-/** Model sometimes dumps a collapsed process template instead of real results. */
-export function isLowQualityFinalAnswer(text: string): boolean {
-  const t = (text || '').trim()
-  if (!t) return true
-  const compact = t.replace(/\s/g, '')
-  if (compact.includes('##分析过程') || compact.includes('###步骤')) return true
-  if (
-    ['-类型:', '- 类型:', '等待执行', '状态:进行中', '状态:等待', '-状态:进行中', '-状态:等待'].some(
-      (token) => t.includes(token),
-    )
-  ) {
-    return true
-  }
-  if (looksLikeModelPipelineChecklist(t)) return true
-  if (
-    (t.match(/✅/g) || []).length >= 2 &&
-    !['QED', '评分', 'pocket', 'PDB', '|', '对接', 'hERG', 'BBB'].some((m) => t.includes(m))
-  ) {
-    return true
-  }
-  return false
-}
+export { isLowQualityFinalAnswer } from './contentFilters'
 
 function parseAdmetMetricLine(line: string): { molId: string; metrics: Record<string, string> } | null {
   const trimmed = line.trim()
@@ -284,23 +267,35 @@ function normalizeType(raw: string): ProcessStep['type'] {
 
 function extractBestFinalAnswer(raw: string): string {
   const markers = ['## 最终回答', '##最终回答'] as const
+  const sectionMarkers = ['## 最终回答', '##最终回答', '## 分析过程', '##分析过程'] as const
   const segments: string[] = []
+
+  const sliceFinalSegment = (body: string): string => {
+    let cut = body
+    for (const marker of sectionMarkers) {
+      const pos = cut.indexOf(marker)
+      if (pos > 0) cut = cut.slice(0, pos)
+    }
+    cut = cut.trim()
+    const noiseIdx = cut.search(/\n⚠️/)
+    if (noiseIdx >= 0) cut = cut.slice(0, noiseIdx).trim()
+    return cut
+  }
+
   for (const marker of markers) {
     let start = 0
     while (true) {
       const pos = raw.indexOf(marker, start)
       if (pos < 0) break
-      let body = raw.slice(pos + marker.length).trim()
-      const procIdx = body.search(/##\s*分析过程/)
-      if (procIdx >= 0) body = body.slice(0, procIdx).trim()
-      const noiseIdx = body.search(/\n⚠️/)
-      if (noiseIdx >= 0) body = body.slice(0, noiseIdx).trim()
+      const body = sliceFinalSegment(raw.slice(pos + marker.length))
       if (body) segments.push(body)
       start = pos + marker.length
     }
   }
-  const cleaned = segments.filter((s) => s && !isLowQualityFinalAnswer(s))
-  if (cleaned.length > 0) return cleaned.sort((a, b) => b.length - a.length)[0]
+  const cleaned = segments.filter((s) => s && !isFinalAnswerUnusable(s))
+  if (cleaned.length > 0) return cleaned[cleaned.length - 1]
+  const trailing = extractTrailingModelFinal(raw)
+  if (trailing) return trailing
   return segments.length > 0 ? segments[segments.length - 1] : ''
 }
 
@@ -310,9 +305,35 @@ export function parseProcessLog(content: string): ParsedAssistantReply {
   const finalIdx = raw.indexOf('## 最终回答')
 
   if (procIdx === -1 || finalIdx === -1 || finalIdx <= procIdx) {
-    const standaloneFinal = extractBestFinalAnswer(raw)
-    if (standaloneFinal) {
-      return { hasProcess: false, toolCount: 0, steps: [], finalAnswer: standaloneFinal, raw }
+    const finalAnswer = extractBestFinalAnswer(raw) || extractTrailingModelFinal(raw)
+    if (procIdx >= 0) {
+      const processEnd =
+        finalAnswer && raw.includes(finalAnswer)
+          ? raw.indexOf(finalAnswer)
+          : raw.length
+      const processBlock = raw.slice(procIdx + '## 分析过程'.length, processEnd).trim()
+      const toolCountMatch = processBlock.match(/工具数:\s*(\d+)/)
+      const toolCount = toolCountMatch ? parseInt(toolCountMatch[1], 10) : 0
+      const stepBlocks = [
+        ...processBlock.matchAll(/###\s*步骤\s*(\d+)\s*·\s*(.+)\n([\s\S]*?)(?=###\s*步骤|\s*$)/g),
+      ]
+      const steps: ProcessStep[] = stepBlocks.map((m) => {
+        const body = m[3]
+        return {
+          index: parseInt(m[1], 10),
+          title: m[2].trim(),
+          type: normalizeType(extractField(body, '类型')),
+          status: extractField(body, '状态') || '已执行',
+          name: extractField(body, '名称') || m[2].trim(),
+          inputSummary: extractField(body, '输入摘要') || '',
+          resultSummary: extractField(body, '结果摘要') || '',
+          detail: extractField(body, '详情') || '',
+        }
+      })
+      return { hasProcess: true, toolCount, steps, finalAnswer, raw }
+    }
+    if (finalAnswer) {
+      return { hasProcess: false, toolCount: 0, steps: [], finalAnswer, raw }
     }
     return { hasProcess: false, toolCount: 0, steps: [], finalAnswer: raw, raw }
   }
@@ -414,7 +435,9 @@ export function formatActionStepSummaryBlock(step: SummaryStep): string | null {
   const detail = stripProcessRuntimeNoise((step.detail || '').trim())
   if (isFailedStepResult(resultSummary, detail)) return null
   const body = (detail || resultSummary).trim()
-  if (!body || isJsonLikeToolOutput(body) || isProcessDisplayNoise(body)) return null
+  if (!body || body === '等待返回' || /^等待返回[。.!！]?$/.test(body) || isJsonLikeToolOutput(body) || isProcessDisplayNoise(body)) {
+    return null
+  }
   const heading = normalizeAi4DrugToolLabel(step.title || step.name || '结果')
   return `**${heading}**\n\n${body}`
 }
@@ -432,43 +455,17 @@ export function buildFallbackFinalAnswer(steps: SummaryStep[]): string {
   return parts.join('\n\n')
 }
 
-function hasStructuredMarkdown(text: string): boolean {
-  const t = (text || '').trim()
-  if (!t) return false
-  if (t.includes('|') && t.includes('---')) return true
-  return /^\s*[-*]\s/m.test(t) && t.includes('**')
-}
-
-function isTruncatedFinal(text: string): boolean {
-  const t = (text || '').trim()
-  if (!t) return true
-  return /[：:,，、|—-…]$/.test(t) || /\*\*[^*]+\*\*\s*$/.test(t)
-}
-
-/** Merge tool-structured blocks with model prose for final display. */
-export function mergeDisplayAnswer(modelFinal: string, fromSteps: string): string {
-  const model = stripProcessRuntimeNoise((modelFinal || '').trim())
-  const steps = (fromSteps || '').trim()
-  if (!steps) return model
-  if (!model || isLowQualityFinalAnswer(model)) return steps
-  if (steps.includes(model)) return steps
-  if (model.includes(steps)) return model
-  if (isTruncatedFinal(model) && !isTruncatedFinal(steps)) return steps
-  if (hasStructuredMarkdown(steps) && !hasStructuredMarkdown(model)) return steps
-  if (steps.split('\n').length >= 4 && model.split('\n').length < 3) return steps
-  if (steps.length > model.length + 80) return steps
-  return `${steps}\n\n${model}`
-}
-
-/** Pick displayable final answer: ignore low-quality model text, fall back to step synthesis. */
+/** Final display: model stream wins; steps only as fallback (no merge duplication). */
 export function resolveDisplayAnswer(
   parsed: Pick<ParsedAssistantReply, 'hasProcess' | 'finalAnswer' | 'raw'>,
   steps: SummaryStep[],
 ): string {
-  const fromSteps = buildFallbackFinalAnswer(steps)
   const rawFinal = parsed.finalAnswer || (!parsed.hasProcess ? parsed.raw : '')
-  const modelFinal = isLowQualityFinalAnswer(rawFinal) ? '' : rawFinal.trim()
-  return mergeDisplayAnswer(modelFinal, fromSteps)
+  const modelFinal = sanitizeFinalAnswerText(rawFinal)
+  if (modelFinal && !isFinalAnswerUnusable(modelFinal)) {
+    return modelFinal
+  }
+  return buildFallbackFinalAnswer(steps)
 }
 
 export function collectPdbIdsFromProcessSteps(
