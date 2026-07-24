@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Smoke tests for adaptive stream timeouts."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+
 from stream_timeouts import estimate_stream_budget
 
 
@@ -28,6 +33,12 @@ def test_general_chat_short():
 def test_pocket_prediction_medium():
     b = estimate_stream_budget("预测口袋", skill_name="口袋预测")
     assert b.max_wait_after_content_sec == 600
+    assert b.post_tool_idle_sec == 1.0
+
+
+def test_molecular_docking_fast_tail():
+    b = estimate_stream_budget("对接", skill_name="分子对接")
+    assert b.post_tool_idle_sec == 1.0
 
 
 def test_cap_at_max():
@@ -40,5 +51,6 @@ if __name__ == "__main__":
     test_default_molecule_count()
     test_general_chat_short()
     test_pocket_prediction_medium()
+    test_molecular_docking_fast_tail()
     test_cap_at_max()
     print("stream_timeouts OK")

@@ -1,4 +1,5 @@
 import Markdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { maskReportUrlsInMarkdown, resolveLinkChildren } from '../utils/reportLinkLabel'
 
@@ -13,7 +14,7 @@ export default function AssistantMarkdown({ children, className }: Props) {
   return (
     <div className={className}>
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           a: ({ href, children: linkChildren }) => {
             const hrefStr = href ?? ''

@@ -3,58 +3,41 @@ import { api } from '../api/client'
 import type { ChatStreamSession, LiveProcessStep, Message, SelectedSkillHint, Session } from '../api/client'
 import { useApiRetry } from './useApiRetry'
 import { newId } from '../utils/id'
-import { hasReplyReady } from '../utils/liveActivity'
-import { parseProcessLog } from '../utils/parseProcessLog'
+import { hasReplyReady, isAnalysisComplete } from '../utils/liveActivity'
+import { parseProcessLog, resolveDisplayAnswer, type SummaryStep } from '../utils/parseProcessLog'
+import {
+  extractReplyFromSnapshot,
+  RESUME_INCOMPLETE_ERROR,
+  shouldResumeInProgress,
+} from '../utils/processLogResume'
+import { mergeProcessStep } from '../utils/processSteps'
 import { frontendTimeoutMs } from '../utils/streamBudget'
-
-function resolveStepStatus(
-  prev?: LiveProcessStep['status'],
-  next?: LiveProcessStep['status'],
-): LiveProcessStep['status'] {
-  if (prev === 'failed' || next === 'failed') return 'failed'
-  if (next) return next
-  if (prev) return prev
-  return 'done'
-}
-
-function mergeStep(steps: LiveProcessStep[], step: LiveProcessStep): LiveProcessStep[] {
-  const next = [...steps]
-  // 工具结果回填：按 tool_call_id 合并，保留原 title/name/input
-  if (step.is_result_update && step.tool_call_id) {
-    const idx = next.findIndex((s) => s.tool_call_id === step.tool_call_id)
-    if (idx >= 0) {
-      next[idx] = {
-        ...next[idx],
-        status: resolveStepStatus(next[idx].status, step.status),
-        result: step.result || next[idx].result,
-        detail: step.detail || next[idx].detail,
-      }
-      return next
-    }
-  }
-  if (step.tool_call_id) {
-    const idx = next.findIndex((s) => s.tool_call_id === step.tool_call_id)
-    if (idx >= 0) {
-      next[idx] = { ...next[idx], ...step }
-      return next
-    }
-  }
-  if (step.record_id) {
-    const idx = next.findIndex((s) => s.record_id === step.record_id && s.kind === step.kind)
-    if (idx >= 0) {
-      next[idx] = { ...next[idx], ...step }
-      return next
-    }
-  }
-  next.push(step)
-  return next
-}
 
 export type StreamingState = {
   content: string
   steps: LiveProcessStep[]
   skillName?: string
   skillCategory?: string
+}
+
+function liveStepsToSummarySteps(steps: LiveProcessStep[]): SummaryStep[] {
+  return steps.map((step) => ({
+    type: step.kind === 'skill' ? '技能' : step.kind === 'thinking' ? '思考' : '工具',
+    title: step.title || step.name || '工具',
+    name: step.name || '',
+    resultSummary: step.result || '',
+    detail: step.detail || '',
+    displayBlock: step.display_block,
+  }))
+}
+
+function buildEarlyFinalizeReply(content: string, steps: LiveProcessStep[]): string {
+  const parsed = parseProcessLog(content)
+  const summarySteps = liveStepsToSummarySteps(steps)
+  const finalBody = resolveDisplayAnswer(parsed, summarySteps)
+  if (parsed.hasProcess && parsed.finalAnswer.trim()) return content
+  if (finalBody.trim()) return `## 最终回答\n\n${finalBody}\n`
+  return content
 }
 
 function buildStoppedReply(content: string): string {
@@ -110,23 +93,14 @@ export function useChat(initialSessionId?: string) {
     [],
   )
 
-  const tryEarlyFinalize = useCallback(
+  const tryEarlyShowFinal = useCallback(
     (content: string, ownsRequest: () => boolean) => {
-      if (!ownsRequest() || finalizedEarlyRef.current || !hasReplyReady(content)) return
-      if (liveStepsRef.current.some((s) => s.status === 'running')) return
-      const parsed = parseProcessLog(content)
-      const hasCompletedTool = liveStepsRef.current.some(
-        (s) =>
-          (s.kind === 'tool' || s.kind === 'skill' || s.kind === 'web') && s.status !== 'running',
-      )
-      const toolCount = parsed.hasProcess
-        ? parsed.toolCount
-        : liveStepsRef.current.filter((s) => s.kind === 'tool' || s.kind === 'skill').length
-      // 仅追问、尚未调用工具时不要提前结束（否则会像「没反应」）
-      if (toolCount === 0 && !hasCompletedTool) return
-      const reply = parsed.hasProcess ? content : parsed.finalAnswer
-      if (!reply.trim()) return
-      finalizeAssistantReply(reply, liveStepsRef.current, ownsRequest)
+      if (!ownsRequest() || finalizedEarlyRef.current) return
+      const steps = liveStepsRef.current
+      if (!isAnalysisComplete(content, steps)) return
+      const reply = buildEarlyFinalizeReply(content, steps)
+      if (!hasReplyReady(reply)) return
+      finalizeAssistantReply(reply, steps, ownsRequest)
     },
     [finalizeAssistantReply],
   )
@@ -155,17 +129,26 @@ export function useChat(initialSessionId?: string) {
             ? { ...prev, content: prev.content + chunk }
             : { content: chunk, steps: [] }
           streamingContentRef.current = next.content
-          tryEarlyFinalize(next.content, ownsRequest)
+          tryEarlyShowFinal(next.content, ownsRequest)
           return next
         })
       },
       onStep: (step: LiveProcessStep) => {
         if (!ownsRequest()) return
-        liveStepsRef.current = mergeStep(liveStepsRef.current, step)
+        liveStepsRef.current = mergeProcessStep(liveStepsRef.current, step)
         const steps = liveStepsRef.current
         setStreaming((prev) => {
           const next = prev ? { ...prev, steps } : { content: '', steps }
-          if (prev?.content) tryEarlyFinalize(prev.content, ownsRequest)
+          if (prev?.content) tryEarlyShowFinal(prev.content, ownsRequest)
+          return next
+        })
+      },
+      onSteps: (steps: LiveProcessStep[]) => {
+        if (!ownsRequest()) return
+        liveStepsRef.current = steps
+        setStreaming((prev) => {
+          const next = prev ? { ...prev, steps } : { content: '', steps }
+          if (prev?.content) tryEarlyShowFinal(prev.content, ownsRequest)
           return next
         })
       },
@@ -208,7 +191,7 @@ export function useChat(initialSessionId?: string) {
         }
       },
     }),
-    [finalizeAssistantReply, sessionId, tryEarlyFinalize],
+    [finalizeAssistantReply, sessionId, tryEarlyShowFinal],
   )
 
   const recoverIncompleteReply = useCallback(
@@ -280,23 +263,12 @@ export function useChat(initialSessionId?: string) {
         onBudgetKnown,
       )
 
-      if (snap.in_progress) {
-        if (!awaitingReply) {
-          return
-        }
+      if (shouldResumeInProgress(snap, awaitingReply)) {
         const steps = snap.steps ?? []
         const content = snap.content || ''
-        const hasRunning = steps.some((s) => s.status === 'running')
-        if (hasReplyReady(content) && !hasRunning) {
-          const parsed = parseProcessLog(content)
-          const reply = parsed.hasProcess ? content : parsed.finalAnswer
-          if (reply.trim()) {
-            finalizeAssistantReply(reply, steps, ownsRequest)
-            return
-          }
-        }
-        if (snap.done && snap.reply?.trim()) {
-          finalizeAssistantReply(snap.reply, steps, ownsRequest)
+        const quickReply = extractReplyFromSnapshot(snap, content)
+        if (quickReply) {
+          finalizeAssistantReply(quickReply, steps, ownsRequest)
           return
         }
         liveStepsRef.current = steps
@@ -318,6 +290,7 @@ export function useChat(initialSessionId?: string) {
         if (ownsRequest() && !finalizedEarlyRef.current) {
           setStreaming(null)
           setLoading(false)
+          setError(RESUME_INCOMPLETE_ERROR)
         }
         return
       }

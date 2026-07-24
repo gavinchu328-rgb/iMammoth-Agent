@@ -1,5 +1,6 @@
 import type { LiveProcessStep } from '../api/client'
-import { formatExecutedToolLabel } from './processStepUtils'
+import { isStreamingFinalReady } from './streamingDisplay'
+import { formatExecutedToolLabel, isActionStep } from './processStepUtils'
 
 function stripPaths(text: string): string {
   return text
@@ -21,31 +22,85 @@ export interface LiveActivity {
   title: string
   detail: string
   runningStepIndex: number | null
+  phase: LiveActivityPhase
+}
+
+export type LiveActivityPhase = 'running' | 'formatting' | 'idle'
+
+export interface LiveActivityOptions {
+  /** Stream has entered final-answer phase (live panel: tail wait before finalize). */
+  streamFinalReady?: boolean
+}
+
+export function hasRunningProcessSteps(steps: LiveProcessStep[]): boolean {
+  return steps.some((s) => isStepInProgress(s))
+}
+
+function isRuntimeWaitStep(step: LiveProcessStep): boolean {
+  const blob = `${step.result || ''} ${step.detail || ''}`
+  return /仍在后台|仍在运行|command still running|process still running/i.test(blob)
+}
+
+export function isStepInProgress(step: LiveProcessStep): boolean {
+  if (step.status === 'running') return true
+  return isRuntimeWaitStep(step)
+}
+
+function findActiveStepIndex(steps: LiveProcessStep[]): number {
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    if (isStepInProgress(steps[i])) return i
+  }
+  return -1
 }
 
 export function hasReplyReady(content: string): boolean {
-  const idx = content.indexOf('## 最终回答')
-  if (idx < 0) return false
-  return content.slice(idx + '## 最终回答'.length).trim().length >= 8
+  return isStreamingFinalReady(content)
+}
+
+/** Stream final is ready and no tool is still running. */
+export function isAnalysisComplete(content: string, steps: LiveProcessStep[]): boolean {
+  return hasReplyReady(content) && !hasRunningProcessSteps(steps)
+}
+
+/** Stream final is ready (display and/or raw SSE buffer). */
+export function isStreamPhaseComplete(content: string, streamRaw?: string): boolean {
+  return hasReplyReady(content) || hasReplyReady(streamRaw || '')
+}
+
+/** Live panel tail: stream ended, waiting for backend finalize / page switch. */
+export function isLivePanelTailFormatting(
+  content: string,
+  steps: LiveProcessStep[],
+  options?: { streamRaw?: string; awaitingFinalize?: boolean },
+): boolean {
+  if (hasRunningProcessSteps(steps)) return false
+  if (isStreamPhaseComplete(content, options?.streamRaw)) return true
+  const raw = (options?.streamRaw || '').trim()
+  if (options?.awaitingFinalize && raw && (raw.includes('## 最终回答') || raw.includes('##最终回答'))) {
+    return true
+  }
+  return false
+}
+
+export function deriveLiveActivityPhase(
+  steps: LiveProcessStep[],
+  options?: LiveActivityOptions,
+): LiveActivityPhase {
+  if (hasRunningProcessSteps(steps)) return 'running'
+  if (options?.streamFinalReady) return 'formatting'
+  return 'idle'
 }
 
 export function deriveLiveActivity(
   steps: LiveProcessStep[],
   skillName?: string,
-  options?: { replyReady?: boolean },
+  options?: LiveActivityOptions,
 ): LiveActivity {
-  if (options?.replyReady) {
-    return {
-      title: '分析已完成',
-      detail: '结果已生成，正在同步对话…',
-      runningStepIndex: null,
-    }
-  }
-
-  const runningIdx = steps.findIndex((s) => s.status === 'running')
+  const phase = deriveLiveActivityPhase(steps, options)
+  const runningIdx = findActiveStepIndex(steps)
   const running = runningIdx >= 0 ? steps[runningIdx] : undefined
 
-  if (running?.kind === 'tool' || running?.kind === 'skill' || running?.kind === 'web') {
+  if (phase === 'running' && running && isActionStep(running)) {
     const label = formatExecutedToolLabel(running)
     const input = stripPaths(running.input || '')
     const prefix = running.kind === 'skill' ? '正在执行技能' : '正在执行'
@@ -53,32 +108,35 @@ export function deriveLiveActivity(
       title: `${prefix}：${label}`,
       detail: input ? `参数 ${input}` : running.kind === 'skill' ? '技能运行中…' : '请稍候…',
       runningStepIndex: runningIdx,
+      phase,
     }
   }
 
-  if (running?.kind === 'thinking') {
+  if (phase === 'running' && running?.kind === 'thinking') {
     const text = stripPaths(running.result || running.input || '')
     return {
       title: skillName ? `猛犸智能体正在分析（${skillName}）` : '猛犸智能体正在分析',
       detail: text ? text.slice(0, 80) : '整理思路中…',
       runningStepIndex: runningIdx,
+      phase,
     }
   }
 
-  const lastAction = [...steps].reverse().find((s) => s.kind === 'tool' || s.kind === 'skill' || s.kind === 'web')
-  if (lastAction && lastAction.status !== 'running') {
+  if (phase === 'formatting') {
     return {
-      title: skillName ? `猛犸智能体正在汇总（${skillName}）` : '猛犸智能体正在汇总结果',
-      detail: `已完成 ${formatExecutedToolLabel(lastAction)}，生成回复中…`,
+      title: '正在整理最终结果',
+      detail: '',
       runningStepIndex: null,
+      phase,
     }
   }
 
   if (skillName) {
     return {
       title: `猛犸智能体正在处理：${skillName}`,
-      detail: '正在连接工具并准备执行，请稍候…',
+      detail: '',
       runningStepIndex: null,
+      phase,
     }
   }
 
@@ -86,5 +144,6 @@ export function deriveLiveActivity(
     title: '猛犸智能体正在思考',
     detail: '分析问题并选择合适工具…',
     runningStepIndex: null,
+    phase,
   }
 }

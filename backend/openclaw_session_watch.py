@@ -9,7 +9,14 @@ from typing import Any, AsyncIterator
 
 from config import settings
 from text_sanitize import is_interm_status_only, sanitize_user_facing_text
-from tool_summarize import friendly_tool_step, summarize_tool_result
+from tool_summarize import (
+    _looks_like_json_leak,
+    friendly_tool_step,
+    is_process_runtime_noise,
+    strip_paths,
+    strip_process_runtime_noise,
+    summarize_tool_result,
+)
 
 OPENCLAW_SESSIONS_INDEX = Path(settings.openclaw_sessions_index)
 OPENCLAW_SESSIONS_ROOT = Path(settings.openclaw_sessions_root)
@@ -18,6 +25,8 @@ OPENCLAW_SESSIONS_ROOT = Path(settings.openclaw_sessions_root)
 POST_CONTENT_IDLE_ROUNDS = 25  # 0.2s * 25 ≈ 5s 无新日志后结束（短任务）
 POST_CONTENT_IDLE_LONG_ROUNDS = 3000  # 0.2s * 3000 ≈ 10min（AI4Drug / 子代理等长任务）
 POST_CONTENT_MAX_ROUNDS = 3000  # 0.2s * 3000 ≈ 10min 上限
+# 主流结束后最多再等约 3s；避免 running_long_ids 残留把 tail 拖到 10 分钟
+POST_CONTENT_TAIL_ROUNDS = 15
 
 _LONG_RUNNING_STEP_MARKERS = (
     "sessions_spawn",
@@ -191,6 +200,16 @@ def _extract_steps_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
         summarized = summarize_tool_result(tool_name, raw)
         friendly = friendly_tool_step(tool_name, {})
         status = "failed" if msg.get("isError") else "done"
+        detail = strip_process_runtime_noise(summarized.get("detail") or "")
+        if _looks_like_json_leak(detail):
+            detail = ""
+        result_line = strip_process_runtime_noise(summarized.get("result") or "")
+        if _looks_like_json_leak(result_line):
+            result_line = "工具执行完成"
+        if is_process_runtime_noise(raw):
+            detail = ""
+            if not result_line or is_process_runtime_noise(result_line):
+                result_line = "命令仍在后台运行"
         # mcporter/exec 后台启动：尚未真正结束，保持 running 以便前端继续等待
         low = (raw or "").lower()
         if (
@@ -213,8 +232,8 @@ def _extract_steps_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
                 "status": status,
                 "name": friendly["name"],
                 "input": "",
-                "result": summarized["result"],
-                "detail": summarized["detail"],
+                "result": result_line,
+                "detail": detail,
                 "tool_call_id": msg.get("toolCallId"),
                 "is_result_update": True,
             }
@@ -224,6 +243,7 @@ def _extract_steps_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
         return []
 
     steps: list[dict[str, Any]] = []
+    thinking_seq = 0
     for part in content:
         if not isinstance(part, dict):
             continue
@@ -231,18 +251,19 @@ def _extract_steps_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
         if ptype == "thinking":
             text = (part.get("thinking") or "").strip()
             if text:
-                preview = text if len(text) <= 300 else text[:297] + "…"
                 steps.append(
                     {
                         "kind": "thinking",
                         "title": "深度思考",
                         "status": "done",
                         "name": "深度思考",
-                        "input": preview,
-                        "result": preview,
+                        "input": text,
+                        "result": text,
                         "detail": text,
+                        "thinking_seq": thinking_seq,
                     }
                 )
+                thinking_seq += 1
         elif ptype == "toolCall":
             raw_name = part.get("name") or "tool"
             friendly = friendly_tool_step(raw_name, part.get("arguments"))
@@ -368,8 +389,8 @@ async def watch_session_jsonl(
             idle_rounds += 1
 
         if content_ended.is_set():
-            # 仅当仍有长任务 running 时用长空闲；工具已完成后尽快结束
-            idle_limit = idle_long_limit if running_long_ids else POST_CONTENT_IDLE_ROUNDS
+            # 主流已结束：无论是否标记长任务，最多再等 POST_CONTENT_TAIL_ROUNDS
+            idle_limit = POST_CONTENT_TAIL_ROUNDS
             if idle_rounds >= idle_limit or rounds >= round_limit:
                 break
         await asyncio.sleep(0.2)

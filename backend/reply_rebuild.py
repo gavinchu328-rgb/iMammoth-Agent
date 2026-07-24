@@ -2,23 +2,63 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
-from tool_summarize import strip_paths
+from tool_summarize import (
+    _prefer_longer_text,
+    is_billable_action_step,
+    strip_paths,
+    strip_process_runtime_noise,
+)
+from skill_display import (
+    should_emit_early_final,
+    synthesize_early_final_from_steps,
+    synthesize_final_from_steps,
+    synthesize_pocket_final_from_steps,
+)
 
 
 def extract_final_answer(reply: str) -> str:
     raw = (reply or "").strip()
-    idx = raw.find("## 最终回答")
-    if idx >= 0:
-        text = raw[idx + len("## 最终回答") :].strip()
+    markers = ("## 最终回答", "##最终回答")
+    positions: list[tuple[int, int]] = []
+    for marker in markers:
+        start = 0
+        while True:
+            pos = raw.find(marker, start)
+            if pos < 0:
+                break
+            positions.append((pos, len(marker)))
+            start = pos + len(marker)
+
+    if not positions:
+        if "## 分析过程" in raw or "##分析过程" in raw:
+            return ""
+        return raw
+
+    def _clean_final_segment(text: str) -> str:
+        proc = text.find("## 分析过程")
+        proc2 = text.find("##分析过程")
+        cut = -1
+        for p in (proc, proc2):
+            if p >= 0 and (cut < 0 or p < cut):
+                cut = p
+        if cut >= 0:
+            text = text[:cut].strip()
         noise = text.find("\n⚠️")
         if noise >= 0:
             text = text[:noise].strip()
-        return text
-    if "## 分析过程" in raw:
-        return ""
-    return raw
+        return strip_process_runtime_noise(text).strip()
+
+    candidates = [_clean_final_segment(raw[pos + mlen :]) for pos, mlen in positions]
+    candidates = [c for c in candidates if c and not _is_low_quality_final_answer(c)]
+    if candidates:
+        return max(candidates, key=len)
+    # fallback: last segment even if short
+    last_pos, last_len = positions[-1]
+    return _clean_final_segment(raw[last_pos + last_len :])
 
 
 def _is_low_quality_final_answer(text: str) -> bool:
@@ -47,15 +87,23 @@ def _is_low_quality_final_answer(text: str) -> bool:
         marker in t for marker in ("QED", "评分", "pocket", "PDB", "|", "对接", "hERG", "BBB")
     ):
         return True
+    if '"pocket_id":' in t or '"molecules":' in t:
+        return True
+    if re.search(r'"\w+"\s*:\s*"', t) and "|" in t:
+        return True
     return False
 
 
 def step_merge_key(step: dict[str, Any]) -> str | None:
+    if step.get("record_id") == "__process_poll__" or step.get("tool_call_id") == "__process_poll__":
+        return "internal:process_poll"
     tid = step.get("tool_call_id")
     if tid:
         return f"tid:{tid}"
     rid = step.get("record_id")
     kind = step.get("kind")
+    if rid and kind == "thinking" and step.get("thinking_seq") is not None:
+        return f"rec:{rid}:thinking:{step['thinking_seq']}"
     if rid and kind:
         return f"rec:{rid}:{kind}"
     return None
@@ -75,49 +123,69 @@ def merge_live_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if tid in by_tool:
                 prev = out[by_tool[tid]]
                 if step.get("is_result_update"):
+                    name = str(step.get("name") or "")
+                    title = str(step.get("title") or "")
+                    keep_name = (
+                        prev.get("name")
+                        if name in ("exec", "执行命令", "命令工具", "bash", "shell", "tool")
+                        else step.get("name")
+                    )
+                    keep_title = (
+                        prev.get("title")
+                        if title in ("exec", "执行命令", "命令工具", "bash", "shell", "tool", "")
+                        else step.get("title")
+                    )
                     out[by_tool[tid]] = {
                         **prev,
+                        **step,
+                        "name": keep_name or prev.get("name") or name,
+                        "title": keep_title or prev.get("title") or title,
                         "status": step.get("status") or "done",
-                        "result": step.get("result") or prev.get("result") or "",
-                        "detail": step.get("detail") or prev.get("detail") or "",
+                        "result": _prefer_longer_text(
+                            str(prev.get("result") or ""),
+                            str(step.get("result") or ""),
+                        ),
+                        "detail": _prefer_longer_text(
+                            str(prev.get("detail") or ""),
+                            str(step.get("detail") or ""),
+                        ),
                     }
                 else:
-                    out[by_tool[tid]] = {**prev, **step}
+                    merged = {**prev, **step}
+                    merged["result"] = _prefer_longer_text(
+                        str(prev.get("result") or ""),
+                        str(step.get("result") or ""),
+                    )
+                    merged["detail"] = _prefer_longer_text(
+                        str(prev.get("detail") or ""),
+                        str(step.get("detail") or ""),
+                    )
+                    out[by_tool[tid]] = merged
                 continue
             by_tool[tid] = len(out)
             out.append(dict(step))
             continue
         rid = step.get("record_id")
         kind = step.get("kind")
-        key = f"{rid}:{kind}" if rid else None
+        if kind == "thinking" and step.get("thinking_seq") is not None:
+            key = f"{rid}:thinking:{step['thinking_seq']}" if rid else None
+        else:
+            key = f"{rid}:{kind}" if rid else None
         if key and key in by_rec:
-            out[by_rec[key]] = {**out[by_rec[key]], **step}
+            prev = out[by_rec[key]]
+            merged = {**prev, **step}
+            if kind == "thinking":
+                for field in ("detail", "result", "input"):
+                    prev_val = str(prev.get(field) or "")
+                    new_val = str(step.get(field) or "")
+                    if len(prev_val) > len(new_val):
+                        merged[field] = prev_val
+            out[by_rec[key]] = merged
             continue
         if key:
             by_rec[key] = len(out)
         out.append(dict(step))
     return out
-
-
-def _is_failed_step_result(result: str, detail: str = "") -> bool:
-    blob = f"{result}\n{detail}".strip()
-    if not blob:
-        return True
-    failures = (
-        "接口调用失败",
-        "命令执行失败",
-        "命令未执行",
-        "工作目录不可用",
-        "执行失败",
-        "搜索未完成",
-        "PDB ID 应为",
-        "RCSB 未找到数据",
-        "未解析到分辨率",
-        "分子设计失败",
-        "未找到有效口袋",
-        "Molecule design failed",
-    )
-    return any(token in blob for token in failures)
 
 
 def _format_step_status(step: dict[str, Any]) -> str:
@@ -129,139 +197,74 @@ def _format_step_status(step: dict[str, Any]) -> str:
     return "已执行"
 
 
-def _parse_admet_metric_line(line: str) -> tuple[str, dict[str, str]] | None:
-    line = line.strip()
-    if not line:
-        return None
-    parts = [p.strip() for p in line.replace("|", "·").split("·") if p.strip()]
-    if len(parts) < 2:
-        return None
-    mol_id = parts[0]
-    metrics: dict[str, str] = {}
-    for part in parts[1:]:
-        tokens = part.split(None, 1)
-        if len(tokens) == 2:
-            metrics[tokens[0].strip()] = tokens[1].strip()
-        elif part:
-            metrics[part] = "—"
-    return mol_id, metrics
+def _is_brief_model_summary(model: str, structured: str) -> bool:
+    m = (model or "").strip()
+    s = (structured or "").strip()
+    if not s:
+        return False
+    if not m or _is_low_quality_final_answer(m):
+        return True
+    if "|" in s and "|" not in m:
+        return True
+    if s.count("\n") >= 3 and m.count("\n") < 2:
+        return True
+    if len(s) > len(m) + 80:
+        return True
+    return False
 
 
-def _format_admet_final_section(step: dict[str, Any]) -> str | None:
-    title = (step.get("title") or step.get("name") or "").strip()
-    name = (step.get("name") or "").lower()
-    blob = f"{title} {name}".lower()
-    if "admet" not in blob and "molecule_evaluation" not in blob and "评估" not in title:
-        return None
-    detail = (step.get("detail") or step.get("result") or "").strip()
-    if not detail:
-        return None
-    rows: list[tuple[str, dict[str, str]]] = []
-    for line in detail.splitlines():
-        parsed = _parse_admet_metric_line(line)
-        if parsed:
-            rows.append(parsed)
-    if not rows:
-        parsed = _parse_admet_metric_line(detail.replace("\n", " · "))
-        if parsed:
-            rows.append(parsed)
-    if not rows:
-        return None
-    metric_order: list[str] = []
-    seen_metrics: set[str] = set()
-    for _, metrics in rows:
-        for key in metrics:
-            if key not in seen_metrics:
-                seen_metrics.add(key)
-                metric_order.append(key)
-    lines = [
-        f"**{title or 'ADMET 评估结果'}**",
-        "",
-        "| 分子 ID | " + " | ".join(metric_order) + " |",
-        "| --- | " + " | ".join("---" for _ in metric_order) + " |",
-    ]
-    for mol_id, metrics in rows:
-        cells = [metrics.get(k, "—") for k in metric_order]
-        lines.append(f"| {mol_id} | " + " | ".join(cells) + " |")
-    return "\n".join(lines)
+def _is_truncated_final_answer(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    if t.endswith(("：", ":", "，", ",", "、", "|", "—", "-", "…")):
+        return True
+    if re.search(r"\*\*[^*]+\*\*\s*$", t):
+        return True
+    if t.count("##") > 0 and len(t) < 200:
+        return True
+    return False
 
 
-def _format_pocket_final_section(step: dict[str, Any]) -> str | None:
-    title = (step.get("title") or step.get("name") or "").strip()
-    if "口袋" not in title and "pocket" not in title.lower():
-        return None
-    detail = (step.get("detail") or step.get("result") or "").strip()
-    if not detail:
-        return None
-    rows: list[tuple[str, str, str]] = []
-    for line in detail.splitlines():
-        line = line.strip()
-        if not line or "_pocket" not in line:
-            continue
-        parts = [p.strip() for p in line.split("·")]
-        pid = parts[0] if parts else line
-        score = ""
-        prob = ""
-        for part in parts[1:]:
-            if "评分" in part:
-                score = part.replace("评分", "").strip()
-            elif "概率" in part:
-                prob = part.replace("概率", "").strip()
-        rows.append((pid, score, prob))
-    if not rows:
-        return None
-    lines = [
-        f"**{title or '口袋预测结果'}**",
-        "",
-        "| 口袋 ID | 评分 | 概率 |",
-        "| --- | --- | --- |",
-    ]
-    for pid, score, prob in rows:
-        lines.append(f"| {pid} | {score or '—'} | {prob or '—'} |")
-    return "\n".join(lines)
+def _merge_final_answer(
+    model_final: str,
+    steps: list[dict[str, Any]],
+    skill_name: str | None = None,
+) -> str:
+    """Merge tool-structured output with model prose; never drop the richer block."""
+    final = strip_process_runtime_noise((model_final or "").strip())
+    synthesized = ""
+    if not skill_name or should_emit_early_final(steps, skill_name):
+        synthesized = (synthesize_final_from_steps(steps, skill_name) or "").strip()
+    if not synthesized:
+        return final
+    if not final or _is_low_quality_final_answer(final):
+        return synthesized
+    if synthesized in final:
+        return final
+    if final in synthesized:
+        return synthesized
+    if _is_truncated_final_answer(final) and not _is_truncated_final_answer(synthesized):
+        return synthesized
+    if _is_brief_model_summary(final, synthesized):
+        return synthesized
+    if len(synthesized) > len(final) + 120 and _is_truncated_final_answer(final):
+        return synthesized
+    return f"{synthesized}\n\n{final}"
 
 
-def synthesize_final_from_steps(steps: list[dict[str, Any]]) -> str:
-    """When the model omits ## 最终回答, build a readable summary from tool steps."""
-    sections: list[str] = []
-    seen_bodies: set[str] = set()
-    for step in steps:
-        kind = step.get("kind")
-        if kind not in ("tool", "skill", "web"):
-            continue
-        pocket_block = _format_pocket_final_section(step)
-        if pocket_block and pocket_block not in seen_bodies:
-            seen_bodies.add(pocket_block)
-            sections.append(pocket_block)
-            continue
-        admet_block = _format_admet_final_section(step)
-        if admet_block and admet_block not in seen_bodies:
-            seen_bodies.add(admet_block)
-            sections.append(admet_block)
-            continue
-        title = (step.get("title") or step.get("name") or "工具").strip()
-        result = (step.get("result") or "").strip()
-        detail = (step.get("detail") or "").strip()
-        if _is_failed_step_result(result, detail):
-            continue
-        if str(step.get("status") or "").lower() == "failed":
-            continue
-        body = detail or result
-        if not body or body in seen_bodies:
-            continue
-        seen_bodies.add(body)
-        sections.append(f"**{title}**\n\n{body}")
-    return "\n\n".join(sections)
-
-
-def rebuild_reply_with_live_steps(raw_reply: str, live_steps: list[dict[str, Any]]) -> str:
+def rebuild_reply_with_live_steps(
+    raw_reply: str,
+    live_steps: list[dict[str, Any]],
+    skill_name: str | None = None,
+) -> str:
     """Prefer full live thinking/tool trail; keep model's final answer."""
     steps = merge_live_steps(live_steps)
     final = extract_final_answer(raw_reply)
     if not steps:
         return raw_reply
 
-    tool_count = sum(1 for s in steps if s.get("kind") in ("tool", "skill", "web"))
+    tool_count = sum(1 for s in steps if is_billable_action_step(s))
     lines = [
         "## 分析过程",
         f"- 工具数: {tool_count}",
@@ -269,15 +272,15 @@ def rebuild_reply_with_live_steps(raw_reply: str, live_steps: list[dict[str, Any
     ]
     for i, step in enumerate(steps, start=1):
         kind = step.get("kind")
-        is_tool = kind in ("tool", "skill", "web")
+        is_tool = is_billable_action_step(step)
         title = (step.get("title") or step.get("name") or ("工具" if is_tool else "深度思考")).strip()
         name = (step.get("name") or "").strip()
         if name and name == title:
             name = title if is_tool else ""
         status = _format_step_status(step)
         inp = strip_paths((step.get("input") or "").strip())
-        result = strip_paths((step.get("result") or "").strip())
-        detail = strip_paths((step.get("detail") or "").strip())
+        result = strip_process_runtime_noise(strip_paths((step.get("result") or "").strip()))
+        detail = strip_process_runtime_noise(strip_paths((step.get("detail") or "").strip()))
         if kind == "thinking" and detail:
             inp = detail[:300] + ("…" if len(detail) > 300 else "")
             result = inp
@@ -298,9 +301,9 @@ def rebuild_reply_with_live_steps(raw_reply: str, live_steps: list[dict[str, Any
         lines.append(f"- 详情: {detail}")
         lines.append("")
 
-    lines.append("## 最终回答")
-    lines.append("")
-    if not final.strip() or _is_low_quality_final_answer(final):
-        final = synthesize_final_from_steps(steps) or ""
-    lines.append(final)
+    merged_final = _merge_final_answer(final, steps, skill_name)
+    if merged_final.strip():
+        lines.append("## 最终回答")
+        lines.append("")
+        lines.append(merged_final)
     return "\n".join(lines).strip() + "\n"

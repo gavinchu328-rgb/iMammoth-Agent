@@ -11,6 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models import Message, Session
+from session_reply import (
+    build_stopped_reply_from_snapshot,
+    reply_from_done_snapshot,
+)
 
 
 def title_from_message(text: str) -> str:
@@ -54,6 +58,22 @@ async def prepare_chat_session(
     return session, history, is_new
 
 
+async def _append_assistant_message(
+    session: Session,
+    *,
+    reply: str,
+    user_message: str,
+    had_history: bool,
+    db: AsyncSession,
+) -> None:
+    assistant_msg = Message(session_id=session.id, role="assistant", content=reply)
+    db.add(assistant_msg)
+    session.updated_at = datetime.now(timezone.utc)
+    if session.title == "新对话" or not had_history:
+        session.title = title_from_message(user_message)
+    await db.commit()
+
+
 async def save_assistant_reply(
     *,
     session: Session,
@@ -63,18 +83,79 @@ async def save_assistant_reply(
 ) -> None:
     from database import async_session
 
+    text = (reply or "").strip()
+    if not text:
+        return
+
     async with async_session() as db:
-        result = await db.execute(select(Session).where(Session.id == session.id))
+        result = await db.execute(
+            select(Session)
+            .options(selectinload(Session.messages))
+            .where(Session.id == session.id)
+        )
         s = result.scalar_one_or_none()
         if not s:
             return
 
-        assistant_msg = Message(session_id=s.id, role="assistant", content=reply)
-        db.add(assistant_msg)
-        s.updated_at = datetime.now(timezone.utc)
-        if s.title == "新对话" or not had_history:
-            s.title = title_from_message(user_message)
-        await db.commit()
+        messages = list(s.messages or [])
+        if messages and messages[-1].role == "assistant":
+            last = messages[-1]
+            if last.content.strip() == text:
+                return
+            last.content = text
+            s.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        await _append_assistant_message(
+            s,
+            reply=text,
+            user_message=user_message,
+            had_history=had_history,
+            db=db,
+        )
+
+
+async def persist_assistant_if_awaiting(
+    *,
+    session_id: uuid.UUID,
+    reply: str,
+    db: AsyncSession,
+) -> bool:
+    """Persist assistant reply when the session still ends on a user message."""
+    text = (reply or "").strip()
+    if not text:
+        return False
+
+    result = await db.execute(
+        select(Session)
+        .options(selectinload(Session.messages))
+        .where(Session.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        return False
+
+    messages = list(session.messages or [])
+    if not messages or messages[-1].role != "user":
+        return False
+
+    user_text = messages[-1].content
+    had_history = len(messages) > 1
+    await _append_assistant_message(
+        session,
+        reply=text,
+        user_message=user_text,
+        had_history=had_history,
+        db=db,
+    )
+    return True
+
+
+async def _require_session(session_id: uuid.UUID, db: AsyncSession) -> None:
+    exists = await db.execute(select(Session.id).where(Session.id == session_id))
+    if exists.scalar_one_or_none() is None:
+        raise HTTPException(404, "会话不存在")
 
 
 async def stop_chat_session(
@@ -85,44 +166,19 @@ async def stop_chat_session(
 ) -> str:
     """Mark process log done and persist a stopped assistant reply if awaiting one."""
     from process_log_store import append_process_done, read_process_log_snapshot
-    from reply_rebuild import rebuild_reply_with_live_steps
+
+    await _require_session(session_id, db)
 
     snap = read_process_log_snapshot(str(session_id))
     if snap.get("done"):
-        return str(snap.get("reply") or reply or "（已停止生成）")
-
-    steps = snap.get("steps") or []
-    content = (reply or snap.get("content") or "").strip()
-    if steps and content:
-        final_reply = rebuild_reply_with_live_steps(content, steps)
+        final_reply = reply_from_done_snapshot(snap, reply)
     else:
-        final_reply = content
+        final_reply = build_stopped_reply_from_snapshot(snap, reply)
+        append_process_done(str(session_id), reply=final_reply, steps=snap.get("steps") or [])
 
-    if not final_reply.strip():
-        final_reply = "（已停止生成）"
-    elif "（已停止生成）" not in final_reply:
-        final_reply = f"{final_reply.rstrip()}\n\n（已停止生成）"
-
-    append_process_done(str(session_id), reply=final_reply, steps=steps)
-
-    result = await db.execute(
-        select(Session)
-        .options(selectinload(Session.messages))
-        .where(Session.id == session_id)
+    await persist_assistant_if_awaiting(
+        session_id=session_id,
+        reply=final_reply,
+        db=db,
     )
-    session = result.scalar_one_or_none()
-    if not session:
-        raise HTTPException(404, "会话不存在")
-
-    messages = list(session.messages or [])
-    if messages and messages[-1].role == "user":
-        user_text = messages[-1].content
-        had_history = len(messages) > 1
-        assistant_msg = Message(session_id=session.id, role="assistant", content=final_reply)
-        db.add(assistant_msg)
-        session.updated_at = datetime.now(timezone.utc)
-        if session.title == "新对话" or not had_history:
-            session.title = title_from_message(user_text)
-        await db.commit()
-
     return final_reply

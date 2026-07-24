@@ -37,7 +37,7 @@ async def to_zh(text: str) -> str:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "把英文译成简洁中文，只输出译文。工具名/路径/代码可保留原文。",
+                            "content": "把英文译成简洁中文，只输出译文，不要省略或概括。工具名/路径/代码可保留原文。",
                         },
                         {"role": "user", "content": key},
                     ],

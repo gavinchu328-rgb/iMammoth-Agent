@@ -15,6 +15,7 @@ class StreamBudget:
     max_rounds: int
     poll_interval_sec: float = 0.2
     molecule_count: int | None = None
+    post_tool_idle_sec: float = 5.0
 
     @property
     def frontend_timeout_ms(self) -> int:
@@ -27,6 +28,7 @@ class StreamBudget:
             "idle_long_rounds": self.idle_long_rounds,
             "max_rounds": self.max_rounds,
             "molecule_count": self.molecule_count,
+            "post_tool_idle_sec": self.post_tool_idle_sec,
         }
 
 
@@ -64,16 +66,12 @@ def estimate_stream_budget(
     skill = (skill_name or "").strip()
     msg = (message or "").strip()
     molecule_count: int | None = None
+    post_tool_idle = 5.0
 
     if skill == "分子设计":
         molecule_count = _parse_molecule_count(msg) or 5
         total = settings.stream_molecule_base_sec + molecule_count * settings.stream_per_molecule_sec
-    elif skill in {
-        "靶点发现",
-        "蛋白质获取",
-        "3D构象生成",
-    }:
-        total = settings.stream_ai4drug_fast_sec
+        post_tool_idle = 5.0
     elif skill in {
         "口袋预测",
         "分子对接",
@@ -84,10 +82,20 @@ def estimate_stream_budget(
         "逆合成分析",
     }:
         total = settings.stream_ai4drug_step_sec
+        post_tool_idle = 1.0
+    elif skill in {
+        "靶点发现",
+        "蛋白质获取",
+        "3D构象生成",
+    }:
+        total = settings.stream_ai4drug_fast_sec
+        post_tool_idle = 1.0
     elif skill:
         total = settings.stream_skill_default_sec
+        post_tool_idle = 5.0
     else:
         total = settings.stream_general_sec
+        post_tool_idle = 5.0
 
     total = min(max(total, settings.stream_short_idle_sec + 30), settings.stream_max_sec)
     long_rounds = max(short_idle, int(total / poll))
@@ -97,6 +105,7 @@ def estimate_stream_budget(
         max_rounds=long_rounds,
         poll_interval_sec=poll,
         molecule_count=molecule_count,
+        post_tool_idle_sec=post_tool_idle,
     )
 
 
@@ -109,11 +118,13 @@ def budget_from_process_log(rows: list[dict]) -> StreamBudget | None:
             continue
         poll = settings.stream_poll_interval_sec
         long_rounds = max(1, int(float(sec) / poll))
+        post_idle = float(row.get("post_tool_idle_sec") or 5.0)
         return StreamBudget(
             max_wait_after_content_sec=float(sec),
             idle_long_rounds=long_rounds,
             max_rounds=long_rounds,
             poll_interval_sec=poll,
             molecule_count=row.get("molecule_count"),
+            post_tool_idle_sec=post_idle,
         )
     return None

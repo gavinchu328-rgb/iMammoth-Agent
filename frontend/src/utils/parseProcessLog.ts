@@ -1,4 +1,12 @@
-import { isValidPdbId } from './processStepUtils'
+import {
+  isAuxiliaryToolStep,
+  isJsonLikeToolOutput,
+  isProcessDisplayNoise,
+  isValidPdbId,
+  normalizeAi4DrugToolLabel,
+  stripProcessRuntimeNoise,
+} from './processStepUtils'
+import { looksLikeModelPipelineChecklist } from './streamingDisplay'
 
 export type ProcessStep = {
   index: number
@@ -9,6 +17,7 @@ export type ProcessStep = {
   inputSummary: string
   resultSummary: string
   detail: string
+  displayBlock?: string
 }
 
 export type ParsedAssistantReply = {
@@ -32,6 +41,7 @@ export function isLowQualityFinalAnswer(text: string): boolean {
   ) {
     return true
   }
+  if (looksLikeModelPipelineChecklist(t)) return true
   if (
     (t.match(/✅/g) || []).length >= 2 &&
     !['QED', '评分', 'pocket', 'PDB', '|', '对接', 'hERG', 'BBB'].some((m) => t.includes(m))
@@ -68,7 +78,7 @@ function formatAdmetFinalSection(
     return null
   }
   const detail = (step.detail || step.resultSummary || '').trim()
-  if (!detail) return null
+  if (!detail || isJsonLikeToolOutput(detail)) return null
   const rows: { molId: string; metrics: Record<string, string> }[] = []
   for (const line of detail.split('\n')) {
     const parsed = parseAdmetMetricLine(line)
@@ -100,19 +110,198 @@ function formatAdmetFinalSection(
   return `**${title || 'ADMET 评估结果'}**\n\n${header}\n${sep}\n${body}`
 }
 
+function formatPocketFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  const title = (step.title || step.name || '').trim()
+  const blob = `${title} ${step.name || ''}`.toLowerCase()
+  if (!blob.includes('口袋') && !blob.includes('pocket')) return null
+  const detail = (step.detail || step.resultSummary || '').trim()
+  if (!detail || isJsonLikeToolOutput(detail)) return null
+  const rows: { pocketId: string; score: string; prob: string }[] = []
+  for (const line of detail.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || !trimmed.includes('_pocket')) continue
+    if (trimmed.includes('"pocket_id":') || trimmed.startsWith('{') || trimmed.startsWith('"')) continue
+    const parts = trimmed.split('·').map((p) => p.trim())
+    const pocketId = parts[0] || trimmed
+    let score = ''
+    let prob = ''
+    for (const part of parts.slice(1)) {
+      if (part.includes('评分')) score = part.replace('评分', '').trim()
+      if (part.includes('概率')) prob = part.replace('概率', '').trim()
+    }
+    rows.push({ pocketId, score, prob })
+  }
+  if (rows.length === 0) return null
+  const header = '| 口袋 ID | 评分 | 概率 |'
+  const sep = '| --- | --- | --- |'
+  const body = rows
+    .map((row) => `| ${row.pocketId} | ${row.score || '—'} | ${row.prob || '—'} |`)
+    .join('\n')
+  return `**${title || '口袋预测结果'}**\n\n${header}\n${sep}\n${body}`
+}
+
+function formatMoleculeDesignFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  const title = (step.title || step.name || '').trim()
+  const blob = `${title} ${step.name || ''}`.toLowerCase()
+  if (!blob.includes('分子设计') && !blob.includes('molecule_design')) return null
+  const result = (step.resultSummary || '').trim()
+  const detail = (step.detail || '').trim()
+  const body = detail || result
+  if (!body || isJsonLikeToolOutput(body)) return null
+  if (body === result && !body.includes('\n') && !body.includes('·') && !/^\d+\.\s/m.test(body)) {
+    return null
+  }
+  const lines: string[] = []
+  for (const raw of body.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const numbered = line.match(/^\d+\.\s*(.+)/)
+    if (numbered) lines.push(numbered[1].trim())
+    else if (line.includes('·')) lines.push(line)
+  }
+  const heading = result || title || '分子设计结果'
+  if (lines.length > 0) {
+    return `**${heading}**\n\n${lines.map((ln) => `- ${ln}`).join('\n')}`
+  }
+  return `**${heading}**\n\n${body}`
+}
+
+function formatLineListSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+  opts: { match: (blob: string) => boolean; heading: string },
+): string | null {
+  const title = (step.title || step.name || '').trim()
+  const blob = `${title} ${step.name || ''}`.toLowerCase()
+  if (!opts.match(blob)) return null
+  const detail = stripProcessRuntimeNoise((step.detail || step.resultSummary || '').trim())
+  if (!detail || isJsonLikeToolOutput(detail)) return null
+  const lines = detail
+    .split('\n')
+    .map((ln) => ln.trim())
+    .filter((ln) => ln && !isJsonLikeToolOutput(ln) && !isProcessDisplayNoise(ln))
+  if (lines.length === 0) return null
+  return `**${title || opts.heading}**\n\n${lines.map((ln) => `- ${ln}`).join('\n')}`
+}
+
+function formatTargetFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('靶点') || b.includes('target'),
+    heading: '靶点发现结果',
+  })
+}
+
+function formatProteinFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('蛋白质') || b.includes('protein'),
+    heading: '蛋白质获取结果',
+  })
+}
+
+function formatReceptorFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('受体') || b.includes('receptor'),
+    heading: '受体准备结果',
+  })
+}
+
+function formatDockingBoxFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('对接盒') || b.includes('docking_box') || b.includes('box config'),
+    heading: '对接盒配置结果',
+  })
+}
+
+function formatDockingFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) =>
+      (b.includes('分子对接') || b.includes('molecular_docking') || b.includes('对接')) &&
+      !b.includes('对接盒'),
+    heading: '分子对接结果',
+  })
+}
+
+function formatRetrosynthesisFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('逆合成') || b.includes('retrosynth'),
+    heading: '逆合成分析结果',
+  })
+}
+
+function formatConformerFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('构象') || b.includes('conformer'),
+    heading: '3D 构象生成结果',
+  })
+}
+
+function formatLigandFinalSection(
+  step: Pick<ProcessStep, 'title' | 'name' | 'resultSummary' | 'detail'>,
+): string | null {
+  return formatLineListSection(step, {
+    match: (b) => b.includes('配体') || b.includes('ligand'),
+    heading: '配体准备结果',
+  })
+}
+
 function extractField(block: string, field: string): string {
-  const re = new RegExp(`^-\\s*${field}:\\s*(.*)$`, 'm')
+  const re = new RegExp(`^-\\s*${field}:\\s*`, 'm')
   const m = block.match(re)
-  return m ? m[1].trim() : ''
+  if (!m || m.index === undefined) return ''
+  const start = m.index + m[0].length
+  const rest = block.slice(start)
+  const nextField = rest.search(/\n-\s*\S/)
+  const value = nextField >= 0 ? rest.slice(0, nextField) : rest
+  return value.trim()
 }
 
 function normalizeType(raw: string): ProcessStep['type'] {
   const t = raw.replace(/\s/g, '')
   if (t.includes('技能')) return '技能'
+  if (t.includes('mcp')) return '工具'
   if (t.includes('搜索')) return '工具'
   if (t.includes('工具') && !t.includes('思考')) return '工具'
   if (t.includes('思考')) return '思考'
   return '未知'
+}
+
+function extractBestFinalAnswer(raw: string): string {
+  const markers = ['## 最终回答', '##最终回答'] as const
+  const segments: string[] = []
+  for (const marker of markers) {
+    let start = 0
+    while (true) {
+      const pos = raw.indexOf(marker, start)
+      if (pos < 0) break
+      let body = raw.slice(pos + marker.length).trim()
+      const procIdx = body.search(/##\s*分析过程/)
+      if (procIdx >= 0) body = body.slice(0, procIdx).trim()
+      const noiseIdx = body.search(/\n⚠️/)
+      if (noiseIdx >= 0) body = body.slice(0, noiseIdx).trim()
+      if (body) segments.push(body)
+      start = pos + marker.length
+    }
+  }
+  const cleaned = segments.filter((s) => s && !isLowQualityFinalAnswer(s))
+  if (cleaned.length > 0) return cleaned.sort((a, b) => b.length - a.length)[0]
+  return segments.length > 0 ? segments[segments.length - 1] : ''
 }
 
 export function parseProcessLog(content: string): ParsedAssistantReply {
@@ -121,11 +310,18 @@ export function parseProcessLog(content: string): ParsedAssistantReply {
   const finalIdx = raw.indexOf('## 最终回答')
 
   if (procIdx === -1 || finalIdx === -1 || finalIdx <= procIdx) {
+    const standaloneFinal = extractBestFinalAnswer(raw)
+    if (standaloneFinal) {
+      return { hasProcess: false, toolCount: 0, steps: [], finalAnswer: standaloneFinal, raw }
+    }
     return { hasProcess: false, toolCount: 0, steps: [], finalAnswer: raw, raw }
   }
 
   const processBlock = raw.slice(procIdx + '## 分析过程'.length, finalIdx).trim()
-  let finalAnswer = raw.slice(finalIdx + '## 最终回答'.length).trim()
+  let finalAnswer = extractBestFinalAnswer(raw.slice(finalIdx))
+  if (!finalAnswer) {
+    finalAnswer = raw.slice(finalIdx + '## 最终回答'.length).trim()
+  }
   // strip trailing exec noise sometimes appended by tools
   const noiseIdx = finalAnswer.search(/\n⚠️\s*🛠️\s*Exec failed:/)
   if (noiseIdx >= 0) finalAnswer = finalAnswer.slice(0, noiseIdx).trim()
@@ -161,7 +357,7 @@ export function parseProcessLog(content: string): ParsedAssistantReply {
 }
 
 function isFailedStepResult(resultSummary: string, detail: string): boolean {
-  const blob = `${resultSummary}\n${detail}`.trim()
+  const blob = stripProcessRuntimeNoise(`${resultSummary}\n${detail}`).trim()
   if (!blob) return true
   const failures = [
     '接口调用失败',
@@ -180,40 +376,99 @@ function isFailedStepResult(resultSummary: string, detail: string): boolean {
   return failures.some((token) => blob.includes(token))
 }
 
+/** Step fields used for summary blocks above the process panel. */
+export type SummaryStep = Pick<
+  ProcessStep,
+  'type' | 'title' | 'name' | 'resultSummary' | 'detail'
+> & {
+  /** Backend skill_display markdown; preferred over client-side parsing. */
+  displayBlock?: string
+}
+
+/** 单步工具/技能 → 框上方摘要块（统一入口，避免各工具各写一套）。 */
+export function formatActionStepSummaryBlock(step: SummaryStep): string | null {
+  const prebuilt = (step.displayBlock || '').trim()
+  if (prebuilt) {
+    if (isProcessDisplayNoise(prebuilt)) return null
+    return prebuilt
+  }
+  if (step.type !== '工具' && step.type !== '技能') return null
+  if (isAuxiliaryToolStep(step)) return null
+  for (const formatter of [
+    formatMoleculeDesignFinalSection,
+    formatTargetFinalSection,
+    formatProteinFinalSection,
+    formatPocketFinalSection,
+    formatConformerFinalSection,
+    formatReceptorFinalSection,
+    formatLigandFinalSection,
+    formatDockingBoxFinalSection,
+    formatDockingFinalSection,
+    formatAdmetFinalSection,
+    formatRetrosynthesisFinalSection,
+  ]) {
+    const block = formatter(step)
+    if (block) return block
+  }
+  const resultSummary = stripProcessRuntimeNoise((step.resultSummary || '').trim())
+  const detail = stripProcessRuntimeNoise((step.detail || '').trim())
+  if (isFailedStepResult(resultSummary, detail)) return null
+  const body = (detail || resultSummary).trim()
+  if (!body || isJsonLikeToolOutput(body) || isProcessDisplayNoise(body)) return null
+  const heading = normalizeAi4DrugToolLabel(step.title || step.name || '结果')
+  return `**${heading}**\n\n${body}`
+}
+
 /** Build a final-answer block from tool step outputs when the model omitted one. */
-export function buildFallbackFinalAnswer(
-  steps: Pick<ProcessStep, 'type' | 'title' | 'name' | 'resultSummary' | 'detail'>[],
-): string {
+export function buildFallbackFinalAnswer(steps: SummaryStep[]): string {
   const parts: string[] = []
   const seen = new Set<string>()
   for (const step of steps) {
-    if (step.type !== '工具' && step.type !== '技能') continue
-    const admetBlock = formatAdmetFinalSection(step)
-    if (admetBlock && !seen.has(admetBlock)) {
-      seen.add(admetBlock)
-      parts.push(admetBlock)
-      continue
-    }
-    const resultSummary = (step.resultSummary || '').trim()
-    const detail = (step.detail || '').trim()
-    if (isFailedStepResult(resultSummary, detail)) continue
-    const body = (detail || resultSummary).trim()
-    if (!body || seen.has(body)) continue
-    seen.add(body)
-    const heading = (step.title || step.name || '结果').trim()
-    parts.push(`**${heading}**\n\n${body}`)
+    const block = formatActionStepSummaryBlock(step)
+    if (!block || seen.has(block)) continue
+    seen.add(block)
+    parts.push(block)
   }
   return parts.join('\n\n')
+}
+
+function hasStructuredMarkdown(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  if (t.includes('|') && t.includes('---')) return true
+  return /^\s*[-*]\s/m.test(t) && t.includes('**')
+}
+
+function isTruncatedFinal(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return true
+  return /[：:,，、|—-…]$/.test(t) || /\*\*[^*]+\*\*\s*$/.test(t)
+}
+
+/** Merge tool-structured blocks with model prose for final display. */
+export function mergeDisplayAnswer(modelFinal: string, fromSteps: string): string {
+  const model = stripProcessRuntimeNoise((modelFinal || '').trim())
+  const steps = (fromSteps || '').trim()
+  if (!steps) return model
+  if (!model || isLowQualityFinalAnswer(model)) return steps
+  if (steps.includes(model)) return steps
+  if (model.includes(steps)) return model
+  if (isTruncatedFinal(model) && !isTruncatedFinal(steps)) return steps
+  if (hasStructuredMarkdown(steps) && !hasStructuredMarkdown(model)) return steps
+  if (steps.split('\n').length >= 4 && model.split('\n').length < 3) return steps
+  if (steps.length > model.length + 80) return steps
+  return `${steps}\n\n${model}`
 }
 
 /** Pick displayable final answer: ignore low-quality model text, fall back to step synthesis. */
 export function resolveDisplayAnswer(
   parsed: Pick<ParsedAssistantReply, 'hasProcess' | 'finalAnswer' | 'raw'>,
-  steps: Pick<ProcessStep, 'type' | 'title' | 'name' | 'resultSummary' | 'detail'>[],
+  steps: SummaryStep[],
 ): string {
+  const fromSteps = buildFallbackFinalAnswer(steps)
   const rawFinal = parsed.finalAnswer || (!parsed.hasProcess ? parsed.raw : '')
-  const finalAnswer = isLowQualityFinalAnswer(rawFinal) ? '' : rawFinal
-  return finalAnswer.trim() || buildFallbackFinalAnswer(steps)
+  const modelFinal = isLowQualityFinalAnswer(rawFinal) ? '' : rawFinal.trim()
+  return mergeDisplayAnswer(modelFinal, fromSteps)
 }
 
 export function collectPdbIdsFromProcessSteps(

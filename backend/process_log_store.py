@@ -207,13 +207,35 @@ def read_process_log_snapshot(session_id: str) -> dict[str, Any]:
     raw_steps = active_turn["raw_steps"]
     done_payload = active_turn["done_payload"]
 
+    # 多轮 mammoth_done 时合并各轮 raw_steps，避免后一轮仅思考覆盖工具步骤
+    if sealed_turns:
+        merged_raw: list[dict[str, Any]] = []
+        all_content_parts: list[str] = []
+        for turn in sealed_turns:
+            merged_raw.extend(turn.get("raw_steps") or [])
+            all_content_parts.extend(turn.get("content_parts") or [])
+        merged_raw.extend(raw_steps)
+        all_content_parts.extend(content_parts)
+        raw_steps = merged_raw
+        content_parts = all_content_parts
+        if not done_payload:
+            for turn in reversed(sealed_turns):
+                if turn.get("done_payload"):
+                    done_payload = turn["done_payload"]
+                    break
+
     from reply_rebuild import merge_live_steps
     from tool_summarize import polish_ai4drug_exec_steps
 
     log_offset = path.stat().st_size
     has_activity = bool(content_parts or raw_steps)
     content = "".join(content_parts)
-    merged_steps = polish_ai4drug_exec_steps(merge_live_steps(raw_steps))
+    reply = str((done_payload or {}).get("reply") or "")
+    if not reply and content:
+        reply = content
+    merged_steps = polish_ai4drug_exec_steps(
+        merge_live_steps(raw_steps), reply=reply, raw_steps=raw_steps
+    )
     done_in_file = done_payload is not None
     running = any(str(s.get("status") or "").lower() == "running" for s in merged_steps)
     synthesized = (
@@ -223,7 +245,8 @@ def read_process_log_snapshot(session_id: str) -> dict[str, Any]:
         and not running
     )
     complete = done_in_file or synthesized
-    reply = str((done_payload or {}).get("reply") or "")
+    if not reply:
+        reply = str((done_payload or {}).get("reply") or "")
     if synthesized and not reply:
         reply = _synthesize_reply_from_content(content)
 

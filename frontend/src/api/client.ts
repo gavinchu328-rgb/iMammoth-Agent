@@ -67,7 +67,12 @@ export interface LiveProcessStep {
   detail?: string
   tool_call_id?: string
   record_id?: string
+  thinking_seq?: number
   is_result_update?: boolean
+  /** false = internal waiter (e.g. process poll), excluded from tool count / billing */
+  billable?: boolean
+  /** Pre-rendered markdown from backend skill_display (preferred for summary above panel). */
+  display_block?: string
 }
 
 export interface ProcessLogSnapshot {
@@ -101,6 +106,7 @@ export interface ChatStreamHandlers {
   onSession?: (payload: ChatStreamSession) => void
   onDelta?: (content: string) => void
   onStep?: (step: LiveProcessStep) => void
+  onSteps?: (steps: LiveProcessStep[]) => void
   onDone?: (payload: ChatStreamDone) => void
   onError?: (message: string) => void
 }
@@ -161,6 +167,9 @@ async function consumeSse(
         break
       case 'step':
         handlers.onStep?.(payload as unknown as LiveProcessStep)
+        break
+      case 'steps':
+        handlers.onSteps?.((payload as { steps?: LiveProcessStep[] }).steps ?? [])
         break
       case 'error':
         if (signal?.aborted) break

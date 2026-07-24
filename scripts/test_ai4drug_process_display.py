@@ -7,7 +7,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
+from tool_summarize import _looks_like_json_leak  # noqa: E402
 
 BASE = "http://127.0.0.1:8080"
 TIMEOUT = 900
@@ -103,6 +108,7 @@ def _post_stream(payload: dict) -> tuple[str, dict[str, Any]]:
     reply = ""
     error = None
     steps_seen: list[dict] = []
+    stream_text = ""
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         event = None
         data_lines: list[str] = []
@@ -123,6 +129,8 @@ def _post_stream(payload: dict) -> tuple[str, dict[str, Any]]:
                     session_id = str(data.get("session_id") or session_id)
                 elif event == "step":
                     steps_seen.append(data)
+                elif event == "delta":
+                    stream_text += str(data.get("content") or "")
                 elif event in ("mammoth_done", "done"):
                     reply = str(data.get("reply") or reply)
                     error = data.get("error")
@@ -135,6 +143,7 @@ def _post_stream(payload: dict) -> tuple[str, dict[str, Any]]:
         "reply": reply,
         "error": error,
         "live_steps": steps_seen,
+        "stream_text": stream_text,
     }
 
 
@@ -145,10 +154,38 @@ def _get_process(session_id: str) -> dict:
         return json.loads(resp.read().decode())
 
 
+def _stream_has_leak(text: str) -> bool:
+    """流式正文不应含过程模板或工具 JSON。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.startswith("{") or t.startswith("["):
+        return True
+    if '"success"' in t and ("{" in t or "[" in t):
+        return True
+    if "ai4drug__" in t:
+        return True
+    if t.lstrip().startswith("## 分析") and "最终回答" not in t[:48]:
+        return True
+    if "工具数:" in t and ("###步骤" in t.replace(" ", "") or "-类型:" in t.replace(" ", "")):
+        return True
+    if '"tool"' in t and ("molecules" in t or "ligands" in t):
+        return True
+    return False
+
+
 def _issues(skill: str, snap: dict, stream_meta: dict) -> list[str]:
     problems: list[str] = []
     if stream_meta.get("error"):
         problems.append(f"stream_error={stream_meta['error']}")
+    stream_text = str(stream_meta.get("stream_text") or "")
+    if stream_text and _stream_has_leak(stream_text):
+        problems.append(f"流式正文含过程/JSON: {stream_text[:80]}")
+    if not stream_text.strip() and not stream_meta.get("error"):
+        # 工具执行期间可能只有 step 事件；最终应有 stream 或 reply
+        reply_preview = str(snap.get("reply") or stream_meta.get("reply") or "")
+        if len(reply_preview) < 20:
+            problems.append("流式正文为空且回复过短")
     steps = snap.get("steps") or []
     tools = [s for s in steps if s.get("kind") in ("tool", "skill", "web")]
     if not tools:
@@ -163,13 +200,13 @@ def _issues(skill: str, snap: dict, stream_meta: dict) -> list[str]:
             problems.append(f"仍显示 exec: {title}/{name}")
         if status == "running":
             problems.append(f"结束后仍 running: {title}")
-        if result.strip().startswith("{") or '"success"' in result:
+        if _looks_like_json_leak(result):
             problems.append(f"结果仍是 JSON: {title} → {result[:60]}")
+        if result.strip() in ("工具执行完成", "执行完成") and name not in ("后台进程", "等待后台任务"):
+            problems.append(f"结果摘要过于笼统: {title} → {result}")
         if "命令仍在后台运行" in result or "Process still running" in result:
             problems.append(f"工具未同步完成: {title}")
-        if len(detail) > 400:
-            problems.append(f"详情过长({len(detail)}): {title}")
-        if "structuredContent" in detail or (detail.strip().startswith("{") and len(detail) > 120):
+        if _looks_like_json_leak(detail):
             problems.append(f"详情像 JSON 复读: {title}")
         if result.lstrip().startswith("#") and len(result) > 80:
             problems.append(f"结果像整份报告复读: {title}")

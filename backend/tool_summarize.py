@@ -65,9 +65,27 @@ def _extract_json_blob(text: str) -> Any | None:
     text = (text or "").strip()
     if not text:
         return None
-    for candidate in (text, text[text.find("{") :] if "{" in text else ""):
-        if not candidate:
+    text = re.split(r"\n\nProcess exited with code \d+\.?\s*$", text, maxsplit=1)[0].strip()
+    candidates: list[str] = []
+    if text:
+        candidates.append(text)
+    brace = text.find("{")
+    if brace >= 0:
+        candidates.append(text[brace:])
+        depth = 0
+        for i, ch in enumerate(text[brace:], brace):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(text[brace : i + 1])
+                    break
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
             continue
+        seen.add(candidate)
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
@@ -297,6 +315,8 @@ def _summarize_exec_output(text: str) -> dict[str, str] | None:
     )
     for pat, label in fail_patterns:
         if pat.search(raw):
+            if label == "命令仍在后台运行":
+                return {"result": label, "detail": "请等待工具返回完整结果"}
             return {"result": label, "detail": _clip_detail(strip_paths(raw), max_chars=200)}
 
     data = _extract_json_blob(raw)
@@ -314,6 +334,11 @@ def _summarize_exec_output(text: str) -> dict[str, str] | None:
             return {"result": f"分辨率 {res} Å", "detail": strip_paths(raw)[:500]}
         # 勿把整段 JSON 当详情
         if "success" in data or data.get("tool") in _AI4DRUG_SHORT_NAMES:
+            tool = str(data.get("tool") or "").strip().lower()
+            if tool in _AI4DRUG_SHORT_NAMES:
+                label = _AI4DRUG_SHORT_NAMES[tool]
+                msg = str(data.get("message") or "").strip()
+                return {"result": f"{label}完成", "detail": _clip_detail(msg) if msg else ""}
             return {"result": "工具执行完成", "detail": ""}
 
     if re.search(r"\b[1-9][A-Z0-9]{3}\b:\s*resolution=", raw, re.I):
@@ -323,6 +348,19 @@ def _summarize_exec_output(text: str) -> dict[str, str] | None:
 
     if re.search(r"\b[1-9][A-Z0-9]{3}\b.*N/A\s*Å", raw):
         return {"result": "未解析到分辨率", "detail": strip_paths(raw)[:500]}
+
+    vina_cfg = re.search(
+        r"center_x\s*=\s*([\d.+-]+).*?center_y\s*=\s*([\d.+-]+).*?center_z\s*=\s*([\d.+-]+)"
+        r".*?size_x\s*=\s*([\d.+-]+).*?size_y\s*=\s*([\d.+-]+).*?size_z\s*=\s*([\d.+-]+)",
+        raw,
+        re.I | re.S,
+    )
+    if vina_cfg:
+        cx, cy, cz, sx, sy, sz = (float(vina_cfg.group(i)) for i in range(1, 7))
+        return {
+            "result": "对接盒配置完成",
+            "detail": f"中心 ({cx:.1f}, {cy:.1f}, {cz:.1f}) · 尺寸 {sx:.1f}×{sy:.1f}×{sz:.1f} Å",
+        }
 
     if "data.rcsb.org" in raw.lower() or raw.startswith("{") and ("audit_author" in raw or "reflns" in raw):
         if isinstance(data, dict):
@@ -412,6 +450,38 @@ _AI4DRUG_TOOL_LABELS: dict[str, str] = {
 _AI4DRUG_SHORT_NAMES: dict[str, str] = {
     k.replace("ai4drug__", ""): v for k, v in _AI4DRUG_TOOL_LABELS.items()
 }
+
+
+def is_mcp_tool_step(step: dict[str, Any]) -> bool:
+    """Detect AI4Drug / mcporter MCP tool steps for billing and counts."""
+    if str(step.get("kind") or "") == "thinking":
+        return False
+    kind = str(step.get("kind") or "")
+    if kind == "skill":
+        return False
+    name = str(step.get("name") or "")
+    title = str(step.get("title") or "")
+    inp = str(step.get("input") or "")
+    raw = f"{name} {title} {inp}".lower()
+    if "ai4drug" in raw or "mcporter" in raw or "mcp." in raw:
+        return True
+    for label in _AI4DRUG_TOOL_LABELS.values():
+        if label in name or label in title:
+            return True
+    return False
+
+
+def is_billable_action_step(step: dict[str, Any]) -> bool:
+    if step.get("billable") is False:
+        return False
+    if is_auxiliary_tool_step(step):
+        return False
+    if str(step.get("name") or "") == "等待后台任务":
+        return False
+    kind = str(step.get("kind") or "")
+    if kind in ("tool", "skill", "web"):
+        return True
+    return is_mcp_tool_step(step)
 
 
 def _ai4drug_label_from_short(short: str) -> str:
@@ -750,12 +820,12 @@ def _summarize_truncated_ai4drug_json(text: str, tool_key: str = "") -> dict[str
                 re.S,
             )
         lines = []
-        for pid, score, prob in pockets_raw[:8]:
+        for pid, score, prob in pockets_raw[:DISPLAY_LIST_MAX]:
             lines.append(f"{pid} · 评分 {score} · 概率 {prob}")
         summary = "口袋预测完成"
         if lines:
             summary = f"识别 {len(lines)} 个结合口袋，主口袋 {lines[0].split(' · ')[0]}"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "conformer_generation" in key:
         mid = re.search(r'"id"\s*:\s*"([^"]+)"', raw) or re.search(
@@ -868,6 +938,146 @@ def _clip_detail(text: str, *, max_chars: int = 280, max_lines: int = 6) -> str:
     return out
 
 
+# 过程日志详情上限（debug 阶段保留完整工具输出，避免 mid-JSON 截断）
+PROCESS_LOG_DETAIL_MAX = 32_000
+PROCESS_LOG_RESULT_MAX = 500
+MOLECULE_DESIGN_LIST_MAX_LINES = 64
+DISPLAY_DETAIL_MAX_LINES = 64
+DISPLAY_LIST_MAX = 64
+
+
+def _clip_detail_display(
+    text: str,
+    *,
+    max_chars: int = PROCESS_LOG_DETAIL_MAX,
+    max_lines: int = DISPLAY_DETAIL_MAX_LINES,
+) -> str:
+    """Full detail for display_block / final answer synthesis."""
+    return _clip_detail(text, max_chars=max_chars, max_lines=max_lines)
+
+
+def _format_molecule_design_lines(molecules: list) -> list[str]:
+    lines: list[str] = []
+    for i, mol in enumerate(molecules, 1):
+        if not isinstance(mol, dict):
+            continue
+        mid = str(mol.get("molecule_id") or mol.get("id") or f"mol{i}")
+        smiles = str(mol.get("smiles") or "").strip()
+        parts = [mid]
+        if smiles:
+            parts.append(smiles)
+        if mol.get("chembl_id"):
+            parts.append(str(mol["chembl_id"]))
+        if mol.get("pref_name"):
+            parts.append(str(mol["pref_name"]))
+        if mol.get("pchembl_value") is not None:
+            parts.append(f"pChEMBL {mol['pchembl_value']}")
+        source = mol.get("source")
+        if source and str(source) not in {mid, smiles}:
+            parts.append(str(source))
+        lines.append(f"{i}. " + " · ".join(parts))
+    return lines
+
+
+def _molecule_design_detail_text(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    return _clip_detail(
+        "\n".join(lines),
+        max_chars=PROCESS_LOG_DETAIL_MAX,
+        max_lines=MOLECULE_DESIGN_LIST_MAX_LINES,
+    )
+
+
+def _clip_process_detail(text: str, *, max_chars: int = PROCESS_LOG_DETAIL_MAX) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if len(raw) <= max_chars:
+        return raw
+    return raw[: max_chars - 12] + "\n…(输出过长已截断)"
+
+
+_RUNTIME_NOISE_PATTERNS = (
+    re.compile(r"command\s+still\s+running", re.I),
+    re.compile(r"process\s+still\s+running", re.I),
+    re.compile(r"\(no\s+new\s+output\)", re.I),
+    re.compile(r"use\s+process\s*\(\s*list/poll", re.I),
+    re.compile(r"session\s+kind-", re.I),
+    re.compile(r"命令仍在运行"),
+    re.compile(r"进程仍在运行"),
+    re.compile(r"需要轮询"),
+    re.compile(r"轮询以确认"),
+    re.compile(r"让我再等"),
+    re.compile(r"再轮询"),
+)
+
+
+def is_exec_output_noise(text: str) -> bool:
+    """Shell/cat 输出的 Vina 配置等中间文件内容，不应出现在最终结果。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    low = t.lower()
+    if "autodock vina" in low and ("center_x" in low or "size_x" in low):
+        return True
+    if "center_x" in low and "size_x" in low and ("center_y" in low or "exhaustiveness" in low):
+        return True
+    if "data_pre_processing.py" in low:
+        return True
+    return False
+
+
+def is_process_display_noise(text: str) -> bool:
+    return is_process_runtime_noise(text) or is_exec_output_noise(text)
+
+
+def is_process_runtime_noise(text: str) -> bool:
+    """OpenClaw exec/process 中间态提示，不应出现在最终结果里。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t in {
+        "命令仍在后台运行",
+        "请等待工具返回完整结果",
+        "后台任务仍在运行",
+        "请等待工具返回完整结果，勿提前结束",
+        "命令仍在运行，需要轮询以确认完成。",
+        "进程仍在运行，让我再等一会儿。",
+        "进程仍在运行。让我再轮询一次。",
+        "逆合成工具仍在运行中。让我轮询一下。",
+    }:
+        return True
+    low = t.lower()
+    return any(p.search(low) for p in _RUNTIME_NOISE_PATTERNS)
+
+
+def strip_process_runtime_noise(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if is_process_display_noise(raw):
+        return ""
+    lines = [ln for ln in raw.splitlines() if ln.strip() and not is_process_display_noise(ln.strip())]
+    return "\n".join(lines).strip()
+
+
+def _prefer_longer_text(prev: str, new: str) -> str:
+    a = strip_process_runtime_noise(prev or "")
+    b = strip_process_runtime_noise(new or "")
+    if _looks_like_json_leak(a):
+        a = ""
+    if _looks_like_json_leak(b):
+        b = ""
+    if not a:
+        return b
+    if not b:
+        return a
+    if len(a) >= len(b):
+        return a
+    return b
+
+
 def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | None:
     payload = _extract_structured_content(raw)
     if not payload:
@@ -953,7 +1163,6 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         molecules = inner.get("molecules") or []
         if not isinstance(molecules, list):
             molecules = []
-        lines: list[str] = []
         ai_count = 0
         chembl_count = 0
         for mol in molecules:
@@ -964,29 +1173,18 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = f"已生成 {len(molecules)} 个候选分子"
         if ai_count or chembl_count:
             summary += f"（AI {ai_count} + ChEMBL {chembl_count}）"
-        for i, mol in enumerate(molecules[:8], 1):
-            if not isinstance(mol, dict):
-                continue
-            mid = str(mol.get("molecule_id") or f"mol{i}")
-            smiles = str(mol.get("smiles") or "").strip()
-            parts = [mid]
-            if smiles:
-                parts.append(smiles[:72] + ("…" if len(smiles) > 72 else ""))
-            if mol.get("chembl_id"):
-                parts.append(str(mol["chembl_id"]))
-            if mol.get("pref_name"):
-                parts.append(str(mol["pref_name"]))
-            if mol.get("pchembl_value") is not None:
-                parts.append(f"pChEMBL {mol['pchembl_value']}")
-            lines.append(f"{i}. " + " · ".join(parts))
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        lines = _format_molecule_design_lines(molecules)
+        return {
+            "result": summary,
+            "detail": _molecule_design_detail_text(lines) or summary,
+        }
 
     if "receptor_preparation" in tool_key:
         receptors = inner.get("receptors") or []
         if not isinstance(receptors, list):
             receptors = []
         lines = []
-        for rec in receptors[:6]:
+        for rec in receptors[:DISPLAY_LIST_MAX]:
             if not isinstance(rec, dict):
                 continue
             tid = str(rec.get("target_id") or "")
@@ -996,14 +1194,14 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
             if bits:
                 lines.append(" · ".join(bits))
         summary = f"已制备 {len(receptors)} 个受体" if receptors else "受体准备完成"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "pocket_prediction" in tool_key:
         pockets = inner.get("pockets") or []
         if not isinstance(pockets, list):
             pockets = []
         lines = []
-        for pocket in pockets[:6]:
+        for pocket in pockets[:DISPLAY_LIST_MAX]:
             if not isinstance(pocket, dict):
                 continue
             pid = str(pocket.get("pocket_id") or "")
@@ -1019,7 +1217,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = f"识别 {len(pockets)} 个结合口袋"
         if lines:
             summary += f"，主口袋 {lines[0].split(' · ')[0]}"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "docking_box_config" in tool_key:
         boxes = (
@@ -1031,7 +1229,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         if not isinstance(boxes, list):
             boxes = []
         lines = []
-        for box in boxes[:6]:
+        for box in boxes[:DISPLAY_LIST_MAX]:
             if not isinstance(box, dict):
                 continue
             pid = str(box.get("pocket_id") or "")
@@ -1062,7 +1260,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = f"已配置 {len(boxes)} 个对接盒" if boxes else (message or "对接盒配置完成")
         if lines:
             summary += f"，{lines[0].split(' · ')[0]}"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "molecular_docking" in tool_key:
         molecules = inner.get("molecules") or inner.get("docking_results") or []
@@ -1070,7 +1268,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
             molecules = []
         lines = []
         best_score: float | None = None
-        for mol in molecules[:8]:
+        for mol in molecules[:DISPLAY_LIST_MAX]:
             if not isinstance(mol, dict):
                 continue
             mid = str(mol.get("molecule_id") or "")
@@ -1090,9 +1288,8 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = "分子对接完成"
         if best_score is not None:
             summary += f"，最佳 {best_score:.3f} kcal/mol"
-        # 一行摘要即可，勿把整分子列表当最终回答复读
-        detail = lines[0] if lines else summary
-        return {"result": summary, "detail": _clip_detail(detail, max_chars=160)}
+        detail = "\n".join(lines) if lines else summary
+        return {"result": summary, "detail": _clip_detail_display(detail)}
 
     if "conformer_generation" in tool_key:
         molecules = inner.get("molecules") or []
@@ -1107,7 +1304,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
             if isinstance(src, list):
                 molecules = src
         lines = []
-        for mol in molecules[:6]:
+        for mol in molecules[:DISPLAY_LIST_MAX]:
             if not isinstance(mol, dict):
                 continue
             mid = str(mol.get("id") or mol.get("molecule_id") or "")
@@ -1117,37 +1314,43 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
                 bits.append(f"{nconf} 个构象")
             smiles = str(mol.get("smiles") or "").strip()
             if smiles:
-                bits.append(smiles[:48] + ("…" if len(smiles) > 48 else ""))
+                bits.append(smiles)
             if bits:
                 lines.append(" · ".join(bits))
         count = len(molecules)
         summary = f"已生成 {count} 个分子构象" if count else "3D构象生成完成"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "ligand_preparation" in tool_key:
         ligands = inner.get("ligands") or []
         if not isinstance(ligands, list):
             ligands = []
         lines = []
-        for lig in ligands[:8]:
+        for lig in ligands[:DISPLAY_LIST_MAX]:
             if not isinstance(lig, dict):
                 continue
             mid = str(lig.get("molecule_id") or lig.get("id") or "")
-            path = str(lig.get("pdbqt_path") or lig.get("output_path") or "")
+            path = str(lig.get("pdbqt_path") or lig.get("output_path") or lig.get("path") or "")
+            smiles = str(lig.get("smiles") or "").strip()
             bits = [mid] if mid else []
+            if smiles:
+                bits.append(smiles if len(smiles) <= 48 else smiles[:45] + "…")
             if path:
+                base = path.rstrip("/").split("/")[-1]
+                bits.append(f"PDBQT: {base}")
+            elif mid:
                 bits.append("PDBQT 已生成")
             if bits:
                 lines.append(" · ".join(bits))
-        summary = f"已制备 {len(ligands)} 个配体"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        summary = f"已制备 {len(ligands)} 个配体" if ligands else "配体准备完成"
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "molecule_evaluation" in tool_key or ("admet" in tool_key and "docking" not in tool_key):
         molecules = inner.get("molecules") or inner.get("evaluations") or inner.get("results") or []
         if not isinstance(molecules, list):
             molecules = []
         lines = []
-        for mol in molecules[:6]:
+        for mol in molecules[:DISPLAY_LIST_MAX]:
             if not isinstance(mol, dict):
                 continue
             mid = str(mol.get("molecule_id") or mol.get("id") or "")
@@ -1171,7 +1374,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
             if bits:
                 lines.append(" · ".join(str(b) for b in bits))
         summary = f"已评估 {len(molecules)} 个分子 ADMET" if molecules else (message or "ADMET 评估完成")
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "retrosynthesis" in tool_key:
         routes = inner.get("routes") or inner.get("synthesis_routes") or inner.get("results") or []
@@ -1181,7 +1384,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         n = len(routes) or len(molecules) if isinstance(molecules, list) else len(routes)
         summary = f"已生成 {n} 条合成路线" if n else (message or "逆合成分析完成")
         lines = []
-        for i, route in enumerate(routes[:4], 1):
+        for i, route in enumerate(routes[:DISPLAY_LIST_MAX], 1):
             if isinstance(route, dict):
                 score = route.get("score") or route.get("confidence")
                 steps_n = route.get("num_steps") or route.get("steps")
@@ -1193,14 +1396,14 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
                 elif isinstance(steps_n, list):
                     bits.append(f"{len(steps_n)} 步")
                 lines.append(" · ".join(bits))
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "target_discovery" in tool_key:
         targets = inner.get("targets") or []
         if not isinstance(targets, list):
             targets = []
         lines = []
-        for target in targets[:6]:
+        for target in targets[:DISPLAY_LIST_MAX]:
             if not isinstance(target, dict):
                 continue
             gene = str(target.get("gene_symbol") or "")
@@ -1220,7 +1423,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = f"发现 {len(targets)} 个靶点"
         if lines:
             summary += f"，Top {lines[0].split(' · ')[0]}"
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     if "protein_acquisition" in tool_key:
         targets = inner.get("targets") or []
@@ -1228,7 +1431,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
             targets = []
         lines = []
         pdb_ids: list[str] = []
-        for target in targets[:6]:
+        for target in targets[:DISPLAY_LIST_MAX]:
             if not isinstance(target, dict):
                 continue
             gene = str(target.get("gene_symbol") or "")
@@ -1251,7 +1454,7 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
         summary = "蛋白质结构已获取"
         if pdb_ids:
             summary = f"{lines[0].split(' · ')[0] if lines else '蛋白'} · PDB " + ", ".join(dict.fromkeys(pdb_ids))
-        return {"result": summary, "detail": _clip_detail("\n".join(lines) if lines else summary)}
+        return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
 
     return None
 
@@ -1455,24 +1658,59 @@ def summarize_tool_result(tool_name: str, raw: str) -> dict[str, str]:
     if "Process still running" in text or "(no new output)" in text:
         return {"result": "后台任务仍在运行", "detail": ""}
     if "Command still running" in text:
-        return {"result": "命令仍在后台运行", "detail": "请等待工具返回完整结果，勿提前结束"}
+        return {"result": "命令仍在后台运行", "detail": "请等待工具返回完整结果"}
     # process 输出的截断 JSON 片段（逆合成常见）
     if "policy_probability" in text or '"in_stock"' in text or "retrosynt" in text.lower():
         return {"result": "逆合成路线已生成", "detail": _clip_detail(strip_paths(text), max_chars=160)}
     if '"molecules"' in text and ("smiles" in text.lower() or "SMILES" in text):
+        ai4 = _summarize_ai4drug_structured(tool_name, text)
+        if ai4:
+            return ai4
         return {"result": "分子结果已返回", "detail": ""}
-    summary = cleaned[:120] + ("…" if len(cleaned) > 120 else "")
-    return {"result": summary or "执行完成", "detail": _clip_detail(cleaned, max_chars=280)}
+    if cleaned.startswith("{") or _looks_like_json_leak(cleaned):
+        ai4 = _summarize_ai4drug_structured(tool_name, text)
+        if ai4:
+            detail = ai4.get("detail") or ""
+            if _looks_like_json_leak(detail):
+                detail = ""
+            return {
+                "result": ai4.get("result") or "工具已返回数据",
+                "detail": detail,
+            }
+        return {"result": "工具已返回数据", "detail": ""}
+    summary = cleaned[:PROCESS_LOG_RESULT_MAX]
+    if len(cleaned) > PROCESS_LOG_RESULT_MAX:
+        summary += "…"
+    if is_process_runtime_noise(summary):
+        summary = "命令仍在后台运行"
+    detail = _clip_process_detail(cleaned)
+    if is_process_runtime_noise(detail):
+        detail = ""
+    return {
+        "result": summary or "执行完成",
+        "detail": detail,
+    }
 
 
 def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
     """把 mcporter/exec 步骤改写成友好 MCP 名称，并压缩 JSON 结果。"""
     out = dict(step)
+    if str(out.get("kind") or "") == "thinking":
+        detail = str(out.get("detail") or out.get("result") or out.get("input") or "").strip()
+        if detail:
+            out["detail"] = detail
+            preview = detail if len(detail) <= 300 else detail[:297] + "…"
+            out["input"] = preview
+            out["result"] = preview
+        return out
+    prev_detail = str(out.get("detail") or "")
+    prev_result = str(out.get("result") or "")
+
     title = str(out.get("title") or "")
     name = str(out.get("name") or "")
     inp = str(out.get("input") or "")
-    result = str(out.get("result") or "")
-    detail = str(out.get("detail") or "")
+    result = prev_result
+    detail = prev_detail
 
     mcp = _parse_mcporter_ai4drug(inp)
     if mcp:
@@ -1492,12 +1730,12 @@ def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
                 out["input"] = i
             title, name = t, n
 
-    blob = result if len(result) >= len(detail) else detail
-    blob = (blob or result or detail).strip()
+    clean_result = strip_process_runtime_noise(result)
+    clean_detail = strip_process_runtime_noise(detail)
+    blob = clean_result if len(clean_result) >= len(clean_detail) else clean_detail
+    blob = (blob or clean_result or clean_detail).strip()
     # 运行中的后台提示也要中文化，避免面板长时间显示英文 Command still running
-    if str(out.get("status") or "").lower() == "running" and (
-        "Command still running" in blob or "Process still running" in blob
-    ):
+    if str(out.get("status") or "").lower() == "running" and is_process_runtime_noise(blob):
         out["result"] = "命令仍在后台运行"
         out["detail"] = "请等待工具返回完整结果"
         blob = out["result"]
@@ -1514,9 +1752,7 @@ def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
         or '"configs"' in blob
         or "validation error" in blob.lower()
         or "unexpected keyword" in blob.lower()
-        or "Command still running" in blob
-        or "Process still running" in blob
-        or "(no new output)" in blob
+        or is_process_runtime_noise(blob)
     )
     if needs_summary and str(out.get("status") or "done") in ("done", "failed", ""):
         short = None
@@ -1534,11 +1770,14 @@ def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
                 summarized = truncated
         if summarized and summarized.get("result") not in ("工具执行完成", "执行完成"):
             out["result"] = summarized.get("result") or out.get("result") or ""
-            out["detail"] = summarized.get("detail") or ""
+            out["detail"] = _prefer_longer_text(prev_detail, summarized.get("detail") or "")
         elif summarized:
-            # 兜底：至少去掉 JSON 大段
             out["result"] = summarized.get("result") or "执行完成"
-            out["detail"] = summarized.get("detail") or ""
+            out["detail"] = _prefer_longer_text(prev_detail, summarized.get("detail") or "")
+        if is_process_runtime_noise(str(out.get("result") or "")) and clean_result:
+            out["result"] = clean_result
+        if is_process_runtime_noise(str(out.get("detail") or "")) and clean_detail:
+            out["detail"] = clean_detail
         if out.get("name") in ("exec", "执行命令"):
             data = _extract_json_blob(blob) or {}
             inferred = _infer_ai4drug_tool_key(data if isinstance(data, dict) else {})
@@ -1552,11 +1791,813 @@ def polish_ai4drug_exec_step(step: dict[str, Any]) -> dict[str, Any]:
                 label = _ai4drug_tool_label(inferred)
                 out["title"] = label
                 out["name"] = label
-    return out
+    final_result = str(out.get("result") or "")
+    if _looks_like_json_leak(final_result) and prev_result and not _looks_like_json_leak(prev_result):
+        final_result = prev_result
+    if is_process_runtime_noise(final_result) and clean_result:
+        final_result = clean_result
+    out["result"] = strip_process_runtime_noise(final_result)
+    out["detail"] = strip_process_runtime_noise(
+        _prefer_longer_text(prev_detail, str(out.get("detail") or "")),
+    )
+    if not out["detail"] and clean_detail:
+        out["detail"] = clean_detail
+    return _sanitize_step_for_ui(out)
 
 
 def _step_blob(step: dict[str, Any]) -> str:
     return f"{step.get('result', '')} {step.get('detail', '')} {step.get('input', '')}"
+
+
+_GENERIC_TOOL_RESULTS = frozenset(
+    {
+        "工具执行完成",
+        "执行完成",
+        "工具已返回数据",
+        "命令仍在后台运行",
+        "请等待工具返回完整结果",
+        "后台任务仍在运行",
+    }
+)
+_AUX_TOOL_NAMES = frozenset(
+    {
+        "exec",
+        "执行命令",
+        "命令工具",
+        "读取报告",
+        "后台进程",
+        "process",
+        "等待后台任务",
+        "sessions_history",
+        "session_history",
+    }
+)
+
+
+def is_auxiliary_tool_step(step: dict[str, Any]) -> bool:
+    name = str(step.get("name") or "")
+    title = str(step.get("title") or "")
+    return name in _AUX_TOOL_NAMES or title in _AUX_TOOL_NAMES
+
+
+_DEBUG_THINKING_MARKERS = (
+    "轮询",
+    "JSON",
+    "json",
+    "解析",
+    "日志",
+    "进程仍在",
+    "命令仍在",
+    "仍在运行",
+    "需要轮询",
+    "让我再等",
+    "再轮询",
+    "session_id 不对",
+    "Top-level keys",
+    "targets_top",
+    "enhanced_targets",
+    "python",
+    "模块",
+    "报告",
+    "完整的目标",
+    "顶级目标",
+    "<tool_call",
+)
+
+
+def _looks_like_json_leak(text: str) -> bool:
+    """Detect truncated JSON / metadata leaked into step result."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    # 已结构化的分子/工具摘要行（如 "1. mol_id · SMILES"）
+    if re.match(r"^\d+\.\s+\S", t) or re.search(r"(?m)^\d+\.\s+\S", t):
+        return False
+    if t.startswith("{") or t.startswith("["):
+        return True
+    if "structuredContent" in t:
+        return True
+    if '"chembl_' in t or "chembl_release" in t or "opentargets" in t.lower():
+        return True
+    if re.search(r'^[^"\n]*"\w+"\s*:', t) and len(t) > 36:
+        return True
+    if t.startswith("/") and ('"' in t or "sqlite" in t.lower()):
+        return True
+    return False
+
+
+def _ui_safe_tool_field(text: str, *, tool_name: str = "exec", field: str = "detail") -> str:
+    """前台展示用：JSON 工具输出只保留结构化摘要，否则清空。"""
+    t = strip_process_runtime_noise(text or "")
+    if not t:
+        return ""
+    if not _looks_like_json_leak(t):
+        return t
+    summarized = summarize_tool_result(tool_name, t)
+    if field == "detail":
+        detail = strip_process_runtime_noise((summarized or {}).get("detail") or "")
+        return detail if detail and not _looks_like_json_leak(detail) else ""
+    result = strip_process_runtime_noise((summarized or {}).get("result") or "")
+    if result and not _looks_like_json_leak(result):
+        return result
+    return "工具执行完成"
+
+
+def _sanitize_step_for_ui(step: dict[str, Any]) -> dict[str, Any]:
+    """SSE / 快照步骤：不把原始 JSON 工具输出推到前台。"""
+    out = dict(step)
+    if str(out.get("kind") or "") == "thinking":
+        return out
+    raw_name = str(out.get("name") or "").strip()
+    raw_title = str(out.get("title") or "").strip()
+    for field, val in (("name", raw_name), ("title", raw_title)):
+        key = val.lower().replace("ai4drug__", "").replace("-", "_")
+        if key in _AI4DRUG_SHORT_NAMES:
+            out[field] = _AI4DRUG_SHORT_NAMES[key]
+    tool_name = str(out.get("name") or out.get("title") or "exec")
+    out["result"] = _ui_safe_tool_field(str(out.get("result") or ""), tool_name=tool_name, field="result")
+    out["detail"] = _ui_safe_tool_field(str(out.get("detail") or ""), tool_name=tool_name, field="detail")
+    inp = str(out.get("input") or "").strip()
+    if inp and (_looks_like_json_leak(inp) or (inp.startswith("{") and len(inp) > 80)):
+        out["input"] = ""
+    from skill_display import format_step_display_block
+
+    out.pop("display_block", None)
+    block = format_step_display_block(out)
+    if block:
+        out["display_block"] = block
+    return out
+
+
+def _is_generic_tool_result(result: str) -> bool:
+    r = (result or "").strip()
+    if not r:
+        return True
+    if r in _GENERIC_TOOL_RESULTS:
+        return True
+    return "仍在后台" in r or "仍在运行" in r
+
+
+def _collect_ai4drug_summaries_from_blobs(steps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Scan all step blobs for inferable AI4Drug JSON summaries."""
+    found: dict[str, dict[str, str]] = {}
+    for step in steps:
+        for field in ("result", "detail", "input"):
+            blob = str(step.get(field) or "").strip()
+            if len(blob) < 24:
+                continue
+            summarized = summarize_tool_result("exec", blob)
+            if not summarized or summarized.get("result") in ("工具执行完成", "执行完成", ""):
+                continue
+            data = _extract_json_blob(blob) or {}
+            inferred = _infer_ai4drug_tool_key(data if isinstance(data, dict) else {})
+            if not inferred:
+                continue
+            label = _ai4drug_tool_label(inferred)
+            prev = found.get(label)
+            if not prev or len(summarized.get("detail") or "") > len(prev.get("detail") or ""):
+                found[label] = summarized
+    return found
+
+
+def _backfill_target_discovery_from_reply(reply: str) -> dict[str, str] | None:
+    count = ""
+    for pat in (
+        r"共发现\s*\*?\*?(\d+)\s*个关联靶点",
+        r"共找到\s*\*?\*?(\d+)\s*个靶点",
+        r"(\d+)\s*个靶点关联",
+        r"发现\s*\*?\*?(\d+)\s*个[^\n]*靶点",
+    ):
+        m = re.search(pat, reply)
+        if m:
+            count = m.group(1)
+            break
+    if not count:
+        return None
+    top_gene = ""
+    top_score = ""
+    row = re.search(r"\|\s*1\s*\|\s*\*\*([A-Z0-9]+)\*\*\s*\|\s*([0-9.]+)", reply)
+    if row:
+        top_gene, top_score = row.group(1), row.group(2)
+    if not top_gene:
+        m = re.search(r"Top\s*靶点为\s*([A-Z0-9]+)", reply)
+        if m:
+            top_gene = m.group(1)
+    if not top_score and top_gene:
+        m = re.search(
+            rf"\*\*{re.escape(top_gene)}\*\*[^|\n]*\|\s*([0-9.]+)",
+            reply,
+        )
+        if m:
+            top_score = m.group(1)
+    genes = re.search(r"(\d+)\s*个独立靶点基因", reply)
+    summary = f"发现 {count} 个靶点"
+    if genes:
+        summary += f"（{genes.group(1)} 个基因）"
+    if top_gene:
+        summary += f"，Top {top_gene}"
+    detail = f"{top_gene} · 关联分 {top_score}" if top_gene and top_score else summary
+    return {"result": summary, "detail": _clip_detail(detail)}
+
+
+def _backfill_molecule_design_from_reply(reply: str) -> dict[str, str] | None:
+    table_rows = re.findall(
+        r"\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*`([^`]+)`",
+        reply,
+    )
+    detail_lines: list[str] = []
+    for mid, source, smi in table_rows:
+        mid = mid.strip()
+        source = source.strip()
+        smi_full = smi.strip()
+        detail_lines.append(f"{mid} · {source} · {smi_full}")
+    count = ""
+    for pat in (
+        r"共返回\s*(\d+)\s*个分子",
+        r"(?:已生成|设计了?|生成)\s*(\d+)\s*个候选分子",
+        r"(\d+)\s*个候选(?:小分子|分子)",
+    ):
+        m = re.search(pat, reply)
+        if m:
+            count = m.group(1)
+            break
+    if not detail_lines and not count:
+        return None
+    if not count:
+        count = str(len(table_rows)) if table_rows else ""
+    summary = f"已生成 {count} 个候选分子" if count else "分子设计完成"
+    ai_m = re.search(r"(\d+)\s*个\s*AI", reply)
+    chembl_m = re.search(r"(\d+)\s*个\s*ChEMBL", reply, re.I)
+    if ai_m or chembl_m:
+        bits = []
+        if ai_m:
+            bits.append(f"AI {ai_m.group(1)}")
+        if chembl_m:
+            bits.append(f"ChEMBL {chembl_m.group(1)}")
+        summary += f"（{' + '.join(bits)}）"
+    if not detail_lines:
+        lines = re.findall(
+            r"(?:^|\n)\s*(?:\d+\.|[-*])\s*([A-Za-z0-9_]+)\s*[·:：]\s*([A-Za-z0-9@+\-=/\\().#%\[\]]{8,})",
+            reply,
+        )
+        for mid, smi in lines:
+            detail_lines.append(f"{mid} · {smi}")
+    return {
+        "result": summary,
+        "detail": _molecule_design_detail_text(
+            [f"{i + 1}. {ln}" for i, ln in enumerate(detail_lines)]
+        )
+        if detail_lines
+        else summary,
+    }
+
+
+def _backfill_molecular_docking_from_reply(reply: str) -> dict[str, str] | None:
+    m = re.search(r"(-?[0-9]+\.[0-9]+)\s*kcal/mol", reply, re.I)
+    if not m:
+        return None
+    score = float(m.group(1))
+    summary = f"分子对接完成，最佳 {score:.3f} kcal/mol"
+    return {"result": summary, "detail": summary}
+
+
+def _backfill_retrosynthesis_from_reply(reply: str) -> dict[str, str] | None:
+    if "逆合成" not in reply and "retrosynt" not in reply.lower():
+        return None
+    steps_n = re.search(r"(\d+)\s*步", reply)
+    routes_n = re.search(r"(\d+)\s*条.{0,6}路线", reply)
+    summary = "逆合成路线已生成"
+    if routes_n:
+        summary = f"已生成 {routes_n.group(1)} 条逆合成路线"
+    elif steps_n:
+        summary += f"（{steps_n.group(1)} 步）"
+    detail_lines = []
+    for line in reply.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if any(token in line for token in ("路线", "步骤", "Suzuki", "中间体", "商用", "in_stock")):
+            detail_lines.append(line)
+    detail = "\n".join(detail_lines[:12])
+    return {"result": summary, "detail": _clip_detail_display(detail) if detail else ""}
+
+
+def _backfill_from_reply(name: str, reply: str) -> dict[str, str] | None:
+    if not reply.strip():
+        return None
+    handlers = {
+        "靶点发现": _backfill_target_discovery_from_reply,
+        "分子设计": _backfill_molecule_design_from_reply,
+        "分子对接": _backfill_molecular_docking_from_reply,
+        "逆合成分析": _backfill_retrosynthesis_from_reply,
+    }
+    handler = handlers.get(name)
+    return handler(reply) if handler else None
+
+
+def _step_needs_backfill(step: dict[str, Any]) -> bool:
+    if str(step.get("kind") or "") != "tool":
+        return False
+    result = str(step.get("result") or "")
+    return _is_generic_tool_result(result) or _looks_like_json_leak(result)
+
+
+def backfill_generic_tool_steps(
+    steps: list[dict[str, Any]],
+    *,
+    reply: str = "",
+    raw_steps: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Fill generic poll/exec placeholders using JSON blobs or final reply."""
+    all_blobs = list(steps) + list(raw_steps or [])
+    blob_summaries = _collect_ai4drug_summaries_from_blobs(all_blobs)
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        s = dict(step)
+        if str(s.get("kind") or "") != "tool":
+            out.append(s)
+            continue
+        name = str(s.get("name") or s.get("title") or "")
+        if not _step_needs_backfill(s):
+            out.append(s)
+            continue
+        filled = blob_summaries.get(name) or _backfill_from_reply(name, reply)
+        if filled:
+            s["result"] = filled.get("result") or s.get("result") or ""
+            s["detail"] = _prefer_longer_text(
+                str(s.get("detail") or ""),
+                filled.get("detail") or "",
+            )
+            if str(s.get("status") or "").lower() == "running":
+                s["status"] = "done"
+        elif _looks_like_json_leak(str(s.get("result") or "")):
+            s["result"] = "工具执行完成"
+            s["detail"] = ""
+        out.append(s)
+    return out
+
+
+def _ai4drug_primary_succeeded(steps: list[dict[str, Any]]) -> bool:
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            continue
+        name = str(step.get("name") or "")
+        title = str(step.get("title") or "")
+        label = name if name in _AI4DRUG_TOOL_LABELS.values() else title
+        if label not in _AI4DRUG_TOOL_LABELS.values():
+            continue
+        if _step_looks_failed(step):
+            continue
+        result = str(step.get("result") or "")
+        if _looks_like_json_leak(result) or _is_generic_tool_result(result):
+            continue
+        return True
+    return False
+
+
+def _drop_auxiliary_tools_when_primary_done(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hide exec / 读报告等 Agent 自行解析 JSON 的辅助步骤。"""
+    if not _ai4drug_primary_succeeded(steps):
+        return steps
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            out.append(step)
+            continue
+        name = str(step.get("name") or "")
+        title = str(step.get("title") or "")
+        if name in _AUX_TOOL_NAMES or title in _AUX_TOOL_NAMES:
+            continue
+        out.append(step)
+    return out
+
+
+def _drop_debug_thinking_when_primary_done(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """主工具已成功时，隐藏轮询/JSON 解析类思考步骤。"""
+    if not _ai4drug_primary_succeeded(steps):
+        return steps
+    trivial = frozenset({"准备开始执行调用。", "准备开始执行调用"})
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if str(step.get("kind") or "") != "thinking":
+            out.append(step)
+            continue
+        text = str(step.get("detail") or step.get("result") or step.get("input") or "").strip()
+        if not text or text in trivial:
+            continue
+        if any(marker in text for marker in _DEBUG_THINKING_MARKERS):
+            continue
+        out.append(step)
+    return out
+
+
+def _drop_thinking_for_single_skill(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """单技能会话（仅一个 AI4Drug 工具）完成后不展示思考步骤。"""
+    if not _ai4drug_primary_succeeded(steps):
+        return steps
+    ai4_tools = [
+        s
+        for s in steps
+        if str(s.get("kind") or "") == "tool"
+        and str(s.get("name") or "") in _AI4DRUG_TOOL_LABELS.values()
+        and not _step_looks_failed(s)
+        and not _looks_like_json_leak(str(s.get("result") or ""))
+    ]
+    if len(ai4_tools) != 1:
+        return steps
+    return [s for s in steps if str(s.get("kind") or "") != "thinking"]
+
+
+def _step_looks_failed(step: dict[str, Any]) -> bool:
+    if str(step.get("status") or "").lower() == "failed":
+        return True
+    blob = f"{step.get('result', '')} {step.get('detail', '')}"
+    return any(token in blob for token in ("失败", "超时", "未找到", "offline", "timed out"))
+
+
+def _drop_stray_exec_probes(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop session-ls / mkdir probe exec rows when real MCP tools exist."""
+    has_named_tool = any(
+        str(s.get("kind") or "") == "tool"
+        and str(s.get("name") or "") not in _AUX_TOOL_NAMES
+        for s in steps
+    )
+    if not has_named_tool:
+        return steps
+    uuid_line = re.compile(r"^[0-9a-f]{32}(?:\s+[0-9a-f]{32})+$", re.I)
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        name = str(step.get("name") or "")
+        title = str(step.get("title") or "")
+        if str(step.get("kind") or "") != "tool":
+            out.append(step)
+            continue
+        if name in _PROCESS_POLL_NAMES or title in _PROCESS_POLL_NAMES:
+            continue
+        if name not in ("exec", "执行命令", "命令工具") and title not in ("exec", "执行命令", "命令工具"):
+            out.append(step)
+            continue
+        blob = f"{step.get('result', '')} {step.get('detail', '')}".strip()
+        if (
+            "session directory not found" in blob.lower()
+            or uuid_line.match(blob.strip())
+        ):
+            continue
+        out.append(step)
+    return out
+
+
+def _drop_failed_web_noise(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hide failed web-search retries when an AI4Drug tool already succeeded."""
+    ai4_success = any(
+        str(s.get("kind") or "") == "tool"
+        and str(s.get("status") or "").lower() == "done"
+        and not _step_looks_failed(s)
+        and (
+            str(s.get("name") or "") in _AI4DRUG_TOOL_LABELS.values()
+            or "ai4drug" in str(s.get("name") or "").lower()
+        )
+        for s in steps
+    )
+    if not ai4_success:
+        return steps
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        name = str(step.get("name") or "")
+        title = str(step.get("title") or "")
+        is_web = "搜索" in name or "search" in name.lower() or "domainlearning" in name.lower()
+        if is_web and _step_looks_failed(step):
+            continue
+        if is_web and _is_generic_tool_result(str(step.get("result") or "")):
+            continue
+        out.append(step)
+    return out
+
+
+def _drop_superseded_failed_tools(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove failed attempts when a later successful step exists for the same tool."""
+    success_names: set[str] = set()
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            continue
+        name = str(step.get("name") or "")
+        if not name or _step_looks_failed(step):
+            continue
+        if str(step.get("status") or "").lower() == "done":
+            success_names.add(name)
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        name = str(step.get("name") or "")
+        if (
+            str(step.get("kind") or "") == "tool"
+            and name in success_names
+            and _step_looks_failed(step)
+        ):
+            continue
+        out.append(step)
+    return out
+
+
+def _dedupe_identical_done_tools(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse duplicate done tool rows with identical name/result/detail."""
+    seen: set[tuple[str, str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            out.append(step)
+            continue
+        name = str(step.get("name") or "")
+        status = str(step.get("status") or "").lower()
+        result = str(step.get("result") or "")
+        detail = str(step.get("detail") or "")
+        if status == "done" and name:
+            sig = (name, result, detail, status)
+            if sig in seen:
+                continue
+            seen.add(sig)
+        out.append(step)
+    return out
+
+
+def _drop_running_when_done_exists(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """同名工具已有成功 done 行时，丢弃其余 running 占位行（避免口袋预测等重复进行中）。"""
+    done_names: set[str] = set()
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            continue
+        name = str(step.get("name") or "")
+        if not name or name in _AUX_TOOL_NAMES:
+            continue
+        if str(step.get("status") or "").lower() != "done":
+            continue
+        blob = f"{step.get('result') or ''} {step.get('detail') or ''}"
+        if _step_looks_failed(step) or "仍在" in blob:
+            continue
+        done_names.add(name)
+
+    if not done_names:
+        return steps
+
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        if str(step.get("kind") or "") != "tool":
+            out.append(step)
+            continue
+        name = str(step.get("name") or "")
+        if (
+            name in done_names
+            and str(step.get("status") or "").lower() == "running"
+            and (
+                not str(step.get("result") or "").strip()
+                or "仍在" in str(step.get("result") or "")
+                or is_process_runtime_noise(str(step.get("result") or ""))
+            )
+        ):
+            continue
+        out.append(step)
+    return out
+
+
+_PROCESS_POLL_NAMES = frozenset({"后台进程", "process"})
+_GENERIC_POLL_RESULTS = frozenset(
+    {
+        "工具执行完成",
+        "执行完成",
+        "后台任务仍在运行",
+        "命令仍在后台运行",
+        "请等待工具返回完整结果",
+    }
+)
+_PROCESS_POLL_RECORD_ID = "__process_poll__"
+
+
+def _is_process_poll_step(step: dict[str, Any]) -> bool:
+    name = str(step.get("name") or "")
+    title = str(step.get("title") or "")
+    inp = str(step.get("input") or "").lower()
+    if name in _PROCESS_POLL_NAMES or title in _PROCESS_POLL_NAMES:
+        return True
+    return "poll" in inp
+
+
+def _poll_carries_tool_result(step: dict[str, Any]) -> bool:
+    """Poll 是否携带可展示/可计费的工具结果（而非「仍在运行」类中间态）。"""
+    if not _is_process_poll_step(step):
+        return False
+    blob = _step_blob(step)
+    if _is_timeout_or_error_blob(blob):
+        return True
+    data = _extract_json_blob(blob) or {}
+    if isinstance(data, dict) and _infer_ai4drug_tool_key(data):
+        return True
+    res = str(step.get("result") or "").strip()
+    if res in _GENERIC_POLL_RESULTS or any(
+        token in res for token in ("仍在后台", "仍在运行", "still running")
+    ):
+        return False
+    name = str(step.get("name") or "")
+    if name not in _PROCESS_POLL_NAMES and name not in ("exec", "执行命令", "命令工具"):
+        return True
+    if _looks_like_json_leak(res):
+        return False
+    return len(res) > 24 and res not in _GENERIC_POLL_RESULTS
+
+
+def _summarize_poll_payload(poll: dict[str, Any]) -> dict[str, Any] | None:
+    """从后台进程 poll 的 JSON 详情提取结构化工具结果。"""
+    blob = _step_blob(poll)
+    data = _extract_json_blob(blob) or {}
+    inferred = _infer_ai4drug_tool_key(data if isinstance(data, dict) else {})
+    tool_name = inferred or "exec"
+    summarized = summarize_tool_result(tool_name, blob)
+    if not summarized:
+        return None
+    result = str(summarized.get("result") or "").strip()
+    detail = str(summarized.get("detail") or "").strip()
+    if _looks_like_json_leak(result):
+        result = ""
+    if _looks_like_json_leak(detail):
+        detail = ""
+    if result in ("", "工具执行完成", "执行完成", "工具已返回数据") and not detail:
+        return None
+    if not result:
+        result = "工具执行完成"
+    out = {**poll, "result": result, "detail": detail}
+    if inferred:
+        label = _ai4drug_tool_label(inferred)
+        out["title"] = label
+        out["name"] = label
+    return out
+
+
+def _merge_poll_into_parent(out: list[dict[str, Any]], poll: dict[str, Any]) -> bool:
+    """将含真实结果的 poll 合并进前面的 exec/MCP 工具步骤，避免重复展示与计费。"""
+    enriched = _summarize_poll_payload(poll)
+    if not enriched:
+        return False
+    poll = enriched
+    target_name = str(poll.get("name") or "")
+
+    def _apply_merge(i: int) -> bool:
+        prev = out[i]
+        pname_out = poll.get("name") if poll.get("name") not in _PROCESS_POLL_NAMES else prev.get("name")
+        title_out = poll.get("title") if poll.get("title") not in _PROCESS_POLL_NAMES else prev.get("title")
+        out[i] = {
+            **prev,
+            "status": poll.get("status") or "done",
+            "result": poll.get("result") or prev.get("result"),
+            "detail": _prefer_longer_text(str(prev.get("detail") or ""), str(poll.get("detail") or "")),
+            "title": title_out or prev.get("title"),
+            "name": pname_out or prev.get("name"),
+        }
+        return True
+
+    if target_name and target_name not in _PROCESS_POLL_NAMES:
+        for i in range(len(out) - 1, -1, -1):
+            prev = out[i]
+            if str(prev.get("kind")) != "tool":
+                continue
+            if str(prev.get("name") or "") != target_name:
+                continue
+            if pname := str(prev.get("name") or ""):
+                if pname in _PROCESS_POLL_NAMES:
+                    continue
+            return _apply_merge(i)
+
+    for i in range(len(out) - 1, -1, -1):
+        prev = out[i]
+        if str(prev.get("kind")) != "tool":
+            continue
+        pname = str(prev.get("name") or "")
+        if pname in _PROCESS_POLL_NAMES or pname in ("等待后台任务", "深度思考"):
+            continue
+        pname_out = poll.get("name") if poll.get("name") not in _PROCESS_POLL_NAMES else prev.get("name")
+        title_out = poll.get("title") if poll.get("title") not in _PROCESS_POLL_NAMES else prev.get("title")
+        out[i] = {
+            **prev,
+            "status": poll.get("status") or "done",
+            "result": poll.get("result") or prev.get("result"),
+            "detail": _prefer_longer_text(str(prev.get("detail") or ""), str(poll.get("detail") or "")),
+            "title": title_out or prev.get("title"),
+            "name": pname_out or prev.get("name"),
+        }
+        return True
+    for i in range(len(out) - 1, -1, -1):
+        prev = out[i]
+        pname = str(prev.get("name") or "")
+        if pname in ("exec", "执行命令", "命令工具") or "仍在" in str(prev.get("result") or ""):
+            pname_out = poll.get("name") if poll.get("name") not in _PROCESS_POLL_NAMES else prev.get("name")
+            out[i] = {
+                **prev,
+                "status": "done",
+                "result": poll.get("result") or prev.get("result"),
+                "detail": _prefer_longer_text(str(prev.get("detail") or ""), str(poll.get("detail") or "")),
+                "title": poll.get("title") or prev.get("title"),
+                "name": pname_out or prev.get("name"),
+            }
+            return True
+    return False
+
+
+def _compact_orphan_poll_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """收起已合并到主工具后的后台 poll 行；仅 poll 时保留最后一条。"""
+    polls = [s for s in steps if str(s.get("name") or "") in _PROCESS_POLL_NAMES]
+    if not polls:
+        return steps
+    has_primary = any(
+        str(s.get("kind") or "") == "tool"
+        and str(s.get("name") or "") not in _PROCESS_POLL_NAMES
+        and str(s.get("name") or "") not in ("等待后台任务", "深度思考")
+        for s in steps
+    )
+    if has_primary:
+        return [s for s in steps if str(s.get("name") or "") not in _PROCESS_POLL_NAMES]
+    if len(polls) <= 1:
+        return steps
+    last = dict(polls[-1])
+    return [s for s in steps if str(s.get("name") or "") not in _PROCESS_POLL_NAMES] + [last]
+
+
+def collapse_process_poll_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并重复的 process poll 中间态，最终 payload 并入父工具步骤。"""
+    if not steps:
+        return steps
+
+    out: list[dict[str, Any]] = []
+    poll_waiter: dict[str, Any] | None = None
+
+    def flush_waiter() -> None:
+        nonlocal poll_waiter
+        if poll_waiter is None:
+            return
+        if str(poll_waiter.get("status") or "").lower() == "running":
+            out.append(poll_waiter)
+        poll_waiter = None
+
+    for raw in steps:
+        step = dict(raw)
+        if _is_process_poll_step(step) and not _poll_carries_tool_result(step):
+            if poll_waiter is None:
+                poll_waiter = {
+                    **step,
+                    "title": "等待后台任务",
+                    "name": "等待后台任务",
+                    "input": "poll",
+                    "billable": False,
+                    "record_id": _PROCESS_POLL_RECORD_ID,
+                    "tool_call_id": _PROCESS_POLL_RECORD_ID,
+                    "result": step.get("result") or "后台任务仍在运行",
+                }
+            else:
+                poll_waiter["status"] = step.get("status") or poll_waiter.get("status")
+                res = str(step.get("result") or "").strip()
+                if res:
+                    poll_waiter["result"] = res
+                if step.get("detail"):
+                    poll_waiter["detail"] = step.get("detail")
+            continue
+
+        flush_waiter()
+
+        if _is_process_poll_step(step) and _poll_carries_tool_result(step):
+            if _merge_poll_into_parent(out, step):
+                continue
+            out.append(step)
+            continue
+
+        out.append(step)
+
+    flush_waiter()
+    return _drop_stale_running_duplicates(out)
+
+
+def _drop_stale_running_duplicates(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove running exec rows superseded by a later done step with the same tool name."""
+    done_by_name: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        if str(step.get("kind")) != "tool":
+            continue
+        name = str(step.get("name") or "")
+        if not name or name in _PROCESS_POLL_NAMES or name == "等待后台任务":
+            continue
+        if str(step.get("status") or "").lower() == "done":
+            done_by_name[name] = step
+
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        name = str(step.get("name") or "")
+        if (
+            str(step.get("status") or "").lower() == "running"
+            and name in done_by_name
+            and (
+                "仍在" in str(step.get("result") or "")
+                or not str(step.get("result") or "").strip()
+                or str(step.get("result") or "").strip() in _GENERIC_POLL_RESULTS
+            )
+        ):
+            continue
+        out.append(step)
+    return out
 
 
 def _is_timeout_or_error_blob(blob: str) -> bool:
@@ -1631,7 +2672,12 @@ def seal_tool_attempt_lifecycle(steps: list[dict[str, Any]]) -> list[dict[str, A
     return out
 
 
-def polish_ai4drug_exec_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def polish_ai4drug_exec_steps(
+    steps: list[dict[str, Any]],
+    *,
+    reply: str = "",
+    raw_steps: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     polished = [polish_ai4drug_exec_step(s) for s in steps]
     # 后台 process / 截断 JSON 片段 → 友好摘要
     for step in polished:
@@ -1649,21 +2695,6 @@ def polish_ai4drug_exec_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any
             if str(step.get("status")) == "running":
                 step["status"] = "done"
             continue
-        if name in ("后台进程", "process") and (
-            blob.lstrip().startswith("{") or '"molecules"' in blob or '"routes"' in blob
-        ):
-            summarized = summarize_tool_result("exec", blob)
-            if summarized and summarized.get("result") not in ("工具执行完成", "执行完成", ""):
-                data = _extract_json_blob(blob) or {}
-                inferred = _infer_ai4drug_tool_key(data if isinstance(data, dict) else {})
-                if inferred:
-                    label = _ai4drug_tool_label(inferred)
-                    step["title"] = label
-                    step["name"] = label
-                step["result"] = summarized["result"]
-                step["detail"] = summarized.get("detail") or ""
-                if str(step.get("status")) == "running":
-                    step["status"] = "done"
 
     # 仅清理：同名工具 poll 成功后，收口仍显示「仍在后台」的 exec（不覆盖已 failed 的重试记录）
     success_by_name: dict[str, dict[str, Any]] = {}
@@ -1721,5 +2752,77 @@ def polish_ai4drug_exec_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any
                 s["result"] = "工具执行完成"
                 s["detail"] = ""
 
+    polished = _drop_stale_running_duplicates(polished)
     polished = seal_tool_attempt_lifecycle(polished)
-    return polished
+    polished = _seal_running_tools_with_results(polished)
+    polished = _drop_running_when_done_exists(polished)
+    polished = backfill_generic_tool_steps(polished, reply=reply, raw_steps=raw_steps or steps)
+    polished = _drop_stray_exec_probes(polished)
+    polished = _drop_superseded_failed_tools(polished)
+    polished = _drop_failed_web_noise(polished)
+    polished = _dedupe_identical_done_tools(polished)
+    polished = prune_live_display_steps(polished)
+    return [_sanitize_step_for_ui(s) for s in polished]
+
+
+def prune_live_display_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse poll waiters and hide runtime-status noise from the live/final step list."""
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        kind = str(step.get("kind") or "")
+        name = str(step.get("name") or "")
+        title = str(step.get("title") or "")
+        if kind == "thinking":
+            text = str(step.get("detail") or step.get("result") or step.get("input") or "").strip()
+            if not text:
+                continue
+            if is_process_runtime_noise(text):
+                continue
+            if any(
+                token in text
+                for token in (
+                    "Command still running",
+                    "Process still running",
+                    "use process (list/poll",
+                    "session kind-",
+                )
+            ):
+                continue
+        if name in _PROCESS_POLL_NAMES or title in _PROCESS_POLL_NAMES:
+            if str(step.get("record_id") or "") != _PROCESS_POLL_RECORD_ID:
+                continue
+        blob = f"{step.get('result') or ''}\n{step.get('detail') or ''}".strip()
+        if kind == "tool" and blob and is_process_runtime_noise(blob):
+            if str(step.get("status") or "").lower() != "running":
+                continue
+        out.append(step)
+    out = collapse_process_poll_steps(out)
+    out = _drop_debug_thinking_when_primary_done(out)
+    out = _drop_thinking_for_single_skill(out)
+    out = _drop_auxiliary_tools_when_primary_done(out)
+    return out
+
+
+def _seal_running_tools_with_results(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """同一 tool_call_id 已有结果时，收口仍显示 running 的工具行。"""
+    out = [dict(s) for s in steps]
+    done_by_tid: dict[str, dict[str, Any]] = {}
+    for step in out:
+        tid = str(step.get("tool_call_id") or "")
+        if not tid:
+            continue
+        if str(step.get("status") or "").lower() in ("done", "failed") and str(step.get("result") or "").strip():
+            done_by_tid[tid] = step
+    for step in out:
+        tid = str(step.get("tool_call_id") or "")
+        if str(step.get("status") or "").lower() != "running" or tid not in done_by_tid:
+            continue
+        src = done_by_tid[tid]
+        step["status"] = src.get("status") or "done"
+        step["result"] = src.get("result") or step.get("result")
+        step["detail"] = src.get("detail") or step.get("detail")
+        if src.get("name") and str(src.get("name")) not in ("exec", "执行命令", "命令工具"):
+            step["name"] = src.get("name")
+        if src.get("title"):
+            step["title"] = src.get("title")
+    return out

@@ -4,6 +4,7 @@ import type { StreamingState } from '../hooks/useChat'
 import LiveProcessPanel from './LiveProcessPanel'
 import ProcessPanel from './ProcessPanel'
 import { parseProcessLog } from '../utils/parseProcessLog'
+import { resolveStreamingDisplayContent } from '../utils/streamingDisplay'
 
 interface Props {
   messages: Message[]
@@ -29,6 +30,16 @@ export default function MessageList({ messages, loading, streaming }: Props) {
   const streamingParsed = useMemo(
     () => (streaming?.content ? parseProcessLog(streaming.content) : null),
     [streaming?.content],
+  )
+
+  const streamingDisplayContent = useMemo(
+    () =>
+      resolveStreamingDisplayContent(streaming?.content, {
+        hasLiveSteps: (streaming?.steps?.length ?? 0) > 0,
+        hasProcess: streamingParsed?.hasProcess,
+        parsedFinalAnswer: streamingParsed?.finalAnswer,
+      }),
+    [streaming?.content, streaming?.steps?.length, streamingParsed?.hasProcess, streamingParsed?.finalAnswer],
   )
 
   const awaitingAssistant =
@@ -67,11 +78,11 @@ export default function MessageList({ messages, loading, streaming }: Props) {
                 <LiveProcessPanel
                   steps={streaming?.steps ?? []}
                   skillName={streaming?.skillName}
+                  streamRaw={streaming?.content}
+                  awaitingFinalize={loading}
                   content={
                     streaming && (streaming.steps.length > 0 || streaming.content)
-                      ? streamingParsed?.hasProcess
-                        ? streamingParsed.finalAnswer || undefined
-                        : streaming.content || undefined
+                      ? streamingDisplayContent
                       : undefined
                   }
                 />

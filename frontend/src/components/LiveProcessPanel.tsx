@@ -1,25 +1,46 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LiveProcessStep } from '../api/client'
 import AssistantMarkdown from './AssistantMarkdown'
-import PdbStructureCards, { PdbCardsFromStepText } from './PdbStructureCards'
 import {
   deriveLiveActivity,
-  hasReplyReady,
+  hasRunningProcessSteps,
+  isLivePanelTailFormatting,
+  isStreamPhaseComplete,
 } from '../utils/liveActivity'
-import { buildFallbackFinalAnswer, collectPdbIdsFromProcessSteps, isLowQualityFinalAnswer } from '../utils/parseProcessLog'
+import { buildFallbackFinalAnswer, isLowQualityFinalAnswer } from '../utils/parseProcessLog'
+import {
+  looksLikeModelPipelineChecklist,
+  looksLikePartialProcessStream,
+  stripStreamingNoise,
+} from '../utils/streamingDisplay'
 import {
   formatStepStatusLine,
-  isActionStep,
-  isPdbRelatedStep,
+  formatToolOutputForDisplay,
+  isJsonLikeToolOutput,
   stepBadgeClass,
   stepBadgeLabel,
   stripProcessPaths,
+  thinkingFullText,
+  thinkingSummaryLine,
 } from '../utils/processStepUtils'
 import { sortStepsForDisplay } from '../utils/sortSteps'
+import {
+  buildProcessPanelHeader,
+  countProcessPanelSteps,
+  getLiveActivityFooterClassName,
+  getLiveStepListClassName,
+  getLiveStreamContentClassName,
+  getProcessPanelCardClassName,
+  getProcessPanelHeaderRowClassName,
+} from '../utils/processPanelLayout'
 
 interface Props {
   steps: LiveProcessStep[]
   content?: string
+  /** Full SSE buffer; used to detect ## 最终回答 when display content is stripped. */
+  streamRaw?: string
+  /** Chat still awaiting onDone / finalize. */
+  awaitingFinalize?: boolean
   skillName?: string
   showActivity?: boolean
 }
@@ -32,10 +53,6 @@ function StepBadge({ kind, name, title }: { kind: LiveProcessStep['kind']; name?
       {stepBadgeLabel(kind, name, title)}
     </span>
   )
-}
-
-function thinkingBody(step: LiveProcessStep): string {
-  return stripProcessPaths(step.detail || step.result || step.input || step.title || '')
 }
 
 function PulseDot({ active = true }: { active?: boolean }) {
@@ -57,15 +74,16 @@ function ActivityFooter({
   activity: ReturnType<typeof deriveLiveActivity>
   executing: boolean
 }) {
+  const titleClass = executing ? 'text-[#1d6fbf]' : 'text-slate-700'
+
   return (
     <div className="flex items-start gap-2.5 text-sm">
       <PulseDot active={executing} />
       <div className="min-w-0 flex-1">
-        <p
-          className={`font-medium leading-snug ${executing ? 'text-[#1d6fbf]' : 'text-emerald-700'}`}
-        >
-          {activity.title}
-        </p>
+        <p className={`font-medium leading-snug ${titleClass}`}>{activity.title}</p>
+        {activity.detail ? (
+          <p className="mt-0.5 text-xs leading-snug text-slate-500">{activity.detail}</p>
+        ) : null}
       </div>
     </div>
   )
@@ -74,19 +92,19 @@ function ActivityFooter({
 export default function LiveProcessPanel({
   steps,
   content,
+  streamRaw,
+  awaitingFinalize = false,
   skillName,
   showActivity = true,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
-  const activity = useMemo(
-    () => deriveLiveActivity(steps, skillName, { replyReady: hasReplyReady(content || '') }),
-    [steps, skillName, content],
-  )
-  const replyReady = hasReplyReady(content || '')
-  const displayContent =
-    content && !isLowQualityFinalAnswer(content) ? content : replyReady ? '' : content
-  const executing = showActivity
+  const streamFinalReady = isStreamPhaseComplete(content || '', streamRaw)
+  const hasRunningSteps = hasRunningProcessSteps(steps)
+  const isTailFormatting = isLivePanelTailFormatting(content || '', steps, {
+    streamRaw,
+    awaitingFinalize,
+  })
   const displaySteps = useMemo(() => sortStepsForDisplay(steps), [steps])
   const resultSteps = useMemo(
     () =>
@@ -100,58 +118,105 @@ export default function LiveProcessPanel({
         inputSummary: stripProcessPaths(step.input || ''),
         resultSummary: stripProcessPaths(step.result || ''),
         detail: stripProcessPaths(step.detail || ''),
+        displayBlock: (step.display_block || '').trim(),
       })),
     [displaySteps],
   )
-  const pdbIds = useMemo(() => collectPdbIdsFromProcessSteps(resultSteps), [resultSteps])
   const fallbackAnswer = useMemo(() => buildFallbackFinalAnswer(resultSteps), [resultSteps])
+  const summaryAbove = useMemo(() => {
+    const fromStream =
+      content && !isLowQualityFinalAnswer(content) ? content.trim() : streamFinalReady ? '' : (content || '').trim()
+    if (streamFinalReady && !hasRunningSteps) {
+      return fromStream || fallbackAnswer.trim() || ''
+    }
+    // 执行中（含对接盒等多步技能）：上方只展示模型流式正文，步骤摘要留给过程框，避免双层内容抢高度
+    return fromStream
+  }, [content, streamFinalReady, fallbackAnswer, hasRunningSteps])
 
-  const actionCount = displaySteps.filter((s) => isActionStep(s.kind)).length
-  const skillCount = displaySteps.filter((s) => s.kind === 'skill').length
-  const thinkCount = displaySteps.length - actionCount
-  const header =
-    skillCount > 0
-      ? `分析过程 · ${displaySteps.length} 步（思考 ${thinkCount} · 技能 ${skillCount} · 工具 ${actionCount - skillCount}）`
-      : thinkCount > 0
-        ? `分析过程 · ${displaySteps.length} 步（思考 ${thinkCount} · 工具 ${actionCount}）`
-        : `分析过程 · ${actionCount} 个工具`
+  const summaryDisplay = useMemo(() => {
+    const text = summaryAbove.trim()
+    if (!text) return ''
+    const cleaned = stripStreamingNoise(text)
+    if (looksLikeModelPipelineChecklist(cleaned || text)) return ''
+    // 过程面板已展示步骤时，不再重复显示模型流水线 checklist
+    if (hasRunningSteps && displaySteps.length > 0 && (looksLikeModelPipelineChecklist(text) || !cleaned)) {
+      return ''
+    }
+    if (cleaned) return cleaned
+    if (looksLikePartialProcessStream(text)) return ''
+    return text
+  }, [summaryAbove, hasRunningSteps, displaySteps.length])
+
+  const activity = useMemo(
+    () => deriveLiveActivity(steps, skillName, { streamFinalReady: isTailFormatting }),
+    [steps, skillName, isTailFormatting],
+  )
+  // Live 面板仅在整轮回复进行中展示；步骤间隙（idle）也应保持蓝色脉冲，避免误显示绿色完成态。
+  const executing = showActivity
+  const panelStatusLabel = isTailFormatting ? '整理最终结果中' : '实时更新中'
+  const panelStatusClass = 'text-[#1d6fbf]'
+
+  const stepCounts = useMemo(() => countProcessPanelSteps(displaySteps), [displaySteps])
+  const header = useMemo(() => buildProcessPanelHeader(stepCounts), [stepCounts])
+
+  const hasStreamAbove = Boolean(summaryDisplay)
+  const stepListClass = getLiveStepListClassName({ hasStreamAbove, isTailFormatting })
+
+  const stepListRef = useRef<HTMLDivElement>(null)
+  const stepsScrollKey = useMemo(
+    () =>
+      displaySteps
+        .map(
+          (s) =>
+            `${s.tool_call_id || s.record_id || ''}:${s.status}:${s.result?.length ?? 0}:${s.detail?.length ?? 0}`,
+        )
+        .join('|'),
+    [displaySteps],
+  )
+
+  useEffect(() => {
+    if (isTailFormatting) return
+    const el = stepListRef.current
+    if (!el) return
+    const frame = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isTailFormatting, stepsScrollKey])
 
   return (
     <div className="flex min-h-0 flex-col">
       <div className="min-h-0 flex-1 space-y-4">
-        {displayContent && (
-          <div className="assistant-prose text-[15px] leading-relaxed text-slate-800">
-            <AssistantMarkdown>{displayContent}</AssistantMarkdown>
+        {summaryDisplay && (
+          <div className={getLiveStreamContentClassName()}>
+            <AssistantMarkdown>{summaryDisplay}</AssistantMarkdown>
           </div>
         )}
 
         {displaySteps.length > 0 && (
-          <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white/80">
-            <div className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-800">
-              <span>{header}</span>
-              <span className="text-xs font-normal text-emerald-600">
-                {replyReady ? '已完成' : '实时更新中'}
-              </span>
+          <div className={getProcessPanelCardClassName()}>
+            <div className={getProcessPanelHeaderRowClassName()}>
+              <span className="min-w-0 truncate pr-2">{header}</span>
+              <span className={`shrink-0 text-xs font-normal ${panelStatusClass}`}>{panelStatusLabel}</span>
             </div>
-            <div className="space-y-2 border-t border-slate-100 px-3 py-3">
+
+            <div ref={stepListRef} className={stepListClass}>
               {displaySteps.map((step, i) => {
                 const input = stripProcessPaths(step.input || '')
-                const result = stripProcessPaths(step.result || '')
-                const detail = stripProcessPaths(step.detail || '')
-                const isRunning = step.status === 'running' && !replyReady
+                const result = formatToolOutputForDisplay(stripProcessPaths(step.result || ''))
+                const detail = formatToolOutputForDisplay(stripProcessPaths(step.detail || ''))
+                const isRunning = step.status === 'running' && hasRunningSteps
                 const isThinking = step.kind === 'thinking'
+                const thinkingFull = isThinking ? thinkingFullText(step) : ''
+                const thinkingSummary = isThinking ? thinkingSummaryLine(thinkingFull) : ''
+                const hasThinkingDetail =
+                  isThinking &&
+                  thinkingFull.replace(/\s+/g, ' ').trim().length >
+                    thinkingSummary.replace(/…$/, '').trim().length + 8
                 const stepKey = `${i}-${step.tool_call_id || step.record_id || step.kind}-${step.title || ''}`
                 const isExpanded = expanded[stepKey] ?? false
-                const showPdb = isPdbRelatedStep(step) && !isRunning
-                // 避免把整段 JSON 结果再铺一遍
-                const looksJson = /^[\s{[]/.test(result) || result.includes('"success"')
+                const looksJson = isJsonLikeToolOutput(stripProcessPaths(step.result || step.detail || ''))
                 const resultLine = looksJson ? '' : result.length > 120 ? `${result.slice(0, 117)}…` : result
-                const detailLine =
-                  looksJson && !detail
-                    ? ''
-                    : detail.length > 280
-                      ? `${detail.slice(0, 277)}…`
-                      : detail
 
                 return (
                   <div
@@ -173,19 +238,23 @@ export default function LiveProcessPanel({
                       <StepBadge kind={step.kind} name={step.name} title={step.title} />
                       <div className="min-w-0 flex-1">
                         {isThinking ? (
-                          <p className="leading-relaxed whitespace-pre-wrap">{thinkingBody(step)}</p>
+                          <p className="leading-snug whitespace-pre-wrap">{thinkingSummary}</p>
                         ) : (
                           <p className="leading-snug whitespace-pre-wrap">
-                            {`${formatStepStatusLine(step, { replyReady })}${
+                            {`${formatStepStatusLine(step)}${
                               input && !input.includes('mcporter') ? ` · ${input}` : ''
                             }`}
                           </p>
                         )}
                         {!isThinking && resultLine && (
-                          <p className="mt-1 text-xs text-slate-500">{resultLine}</p>
+                          <p className="mt-1 text-xs whitespace-pre-wrap text-slate-500">{resultLine}</p>
                         )}
                       </div>
-                      {isRunning ? (
+                      {isThinking ? (
+                        hasThinkingDetail && (
+                          <span className="shrink-0 text-xs text-slate-400">{isExpanded ? '▾' : '▸'}</span>
+                        )
+                      ) : isRunning ? (
                         <span className="shrink-0 animate-pulse text-xs font-medium text-[#4BA4F8]">
                           进行中
                         </span>
@@ -195,20 +264,14 @@ export default function LiveProcessPanel({
                         </span>
                       )}
                     </button>
-                    {isExpanded && !isThinking && (detailLine || showPdb) && (
+                    {isExpanded && isThinking && hasThinkingDetail && (
                       <div className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
-                        {detailLine && (
-                          <div className="whitespace-pre-wrap rounded bg-white/80 px-2 py-1.5">{detailLine}</div>
-                        )}
-                        {showPdb && (
-                          <PdbCardsFromStepText
-                            title={step.title}
-                            name={step.name}
-                            input={input}
-                            result={result}
-                            detail={detail}
-                          />
-                        )}
+                        <div className="whitespace-pre-wrap rounded bg-white/80 px-2 py-1.5">{thinkingFull}</div>
+                      </div>
+                    )}
+                    {isExpanded && !isThinking && detail && (
+                      <div className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
+                        <div className="whitespace-pre-wrap rounded bg-white/80 px-2 py-1.5">{detail}</div>
                       </div>
                     )}
                   </div>
@@ -219,25 +282,9 @@ export default function LiveProcessPanel({
         )}
       </div>
 
-      {replyReady && pdbIds.length > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-sm font-semibold text-slate-800">检索到的蛋白结构</h4>
-          <PdbStructureCards pdbIds={pdbIds} />
-        </div>
-      )}
-
-      {replyReady && !displayContent?.trim() && fallbackAnswer && (
-        <div className="assistant-prose text-[15px] leading-relaxed text-slate-800">
-          <AssistantMarkdown>{fallbackAnswer}</AssistantMarkdown>
-        </div>
-      )}
-
       {showActivity && (
-        <div className="sticky bottom-0 z-10 -mx-1 mt-3 border-t border-slate-200/80 bg-slate-50/95 px-1 pt-3 backdrop-blur-sm">
-          <ActivityFooter
-            activity={activity}
-            executing={executing}
-          />
+        <div className={getLiveActivityFooterClassName()}>
+          <ActivityFooter activity={activity} executing={executing} />
         </div>
       )}
     </div>

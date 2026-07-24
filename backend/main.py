@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from chat_helpers import prepare_chat_session, save_assistant_reply, stop_chat_session, title_from_message
+from process_log_heal import prepare_process_log_snapshot
 from config import settings
 from database import engine, get_db
 from data_search import run_search
@@ -36,6 +37,7 @@ from process_log_store import (
     read_process_log_snapshot,
 )
 from reply_rebuild import merge_live_steps, rebuild_reply_with_live_steps
+from stream_content_filter import ClientStreamFilter
 from stream_timeouts import budget_from_process_log, estimate_stream_budget
 from text_sanitize import is_interm_status_only, sanitize_user_facing_text
 from zh_normalize import normalize_step_zh, normalize_steps_zh
@@ -633,7 +635,8 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         chunks: list[str] = []
         followup_texts: list[str] = []
         live_steps: list[dict] = []
-        polished_snapshot: dict[str, dict] = {}
+        last_steps_sig = ""
+        client_stream = ClientStreamFilter()
         queue: asyncio.Queue[tuple[str, dict | str]] = asyncio.Queue()
         stream_error: str | None = None
         stream_budget = estimate_stream_budget(
@@ -644,6 +647,7 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         session_payload = {
             "session_id": session_id_str,
             "stream_budget_sec": stream_budget.max_wait_after_content_sec,
+            "post_tool_idle_sec": stream_budget.post_tool_idle_sec,
             "molecule_count": stream_budget.molecule_count,
             "openclaw_agent_id": agent_id,
             "openclaw_model": oc_model,
@@ -662,11 +666,15 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                     model=oc_model,
                 ):
                     sanitized = sanitize_user_facing_text(delta)
-                    if not sanitized or is_interm_status_only(sanitized):
+                    if not sanitized:
+                        continue
+                    if sanitized.strip() and is_interm_status_only(sanitized):
                         continue
                     chunks.append(sanitized)
                     append_process_event(session_id_str, {"type": "delta", "content": sanitized})
-                    await queue.put(("delta", {"content": sanitized}))
+                    visible = client_stream.feed(sanitized)
+                    if visible:
+                        await queue.put(("delta", {"content": visible}))
             except OpenClawError as e:
                 stream_error = str(e)
                 await queue.put(("error", {"message": stream_error}))
@@ -689,9 +697,10 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             async def emit_step(step: dict) -> None:
                 from tool_summarize import polish_ai4drug_exec_step
 
-                step = polish_ai4drug_exec_step(step)
-                append_process_event(session_id_str, {"type": "step", **step})
-                await queue.put(("step", step))
+                # 过程日志保留原始输出；SSE/展示再做友好化摘要
+                append_process_event(session_id_str, {"type": "step", **dict(step)})
+                polished = polish_ai4drug_exec_step(dict(step))
+                await queue.put(("step", polished))
 
             async def emit_thinking_zh(step: dict) -> None:
                 try:
@@ -715,7 +724,9 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                             continue
                         followup_texts.append(text)
                         append_process_event(session_id_str, {"type": "delta", "content": text})
-                        await queue.put(("delta", {"content": text}))
+                        visible = client_stream.feed(text)
+                        if visible:
+                            await queue.put(("delta", {"content": visible}))
                         continue
                     step = payload
                     if step.get("kind") == "thinking":
@@ -730,14 +741,12 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         steps_task = asyncio.create_task(pump_steps())
 
         loop = asyncio.get_running_loop()
-        post_stream_settle_sec = 2.0
+        post_stream_settle_sec = 0.5
         max_wait_after_content_sec = stream_budget.max_wait_after_content_sec
         settle_deadline: float | None = None
         content_ended_at: float | None = None
-        idle_after_tools_sec = min(
-            60.0,
-            max(5.0, stream_budget.max_wait_after_content_sec / 60.0),
-        )
+        idle_after_tools_sec = stream_budget.post_tool_idle_sec
+        synthesized_final_emitted = False
 
         def _step_still_background(step: dict) -> bool:
             blob = f"{step.get('result', '')} {step.get('detail', '')}"
@@ -777,8 +786,11 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         def _has_running_tools() -> bool:
             # 必须看合并后的最新状态；历史中间态「命令仍在后台运行」不能拖住整轮结束
             from reply_rebuild import merge_live_steps
+            from tool_summarize import _drop_running_when_done_exists
 
-            merged = merge_live_steps([s for s in live_steps if isinstance(s, dict)])
+            merged = _drop_running_when_done_exists(
+                merge_live_steps([s for s in live_steps if isinstance(s, dict)])
+            )
             has_poll_done = any(_is_process_poll_done(s) for s in merged)
             for s in merged:
                 status = str(s.get("status") or "").lower()
@@ -814,31 +826,55 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                         live_steps.append(data)  # type: ignore[arg-type]
                         if isinstance(data, dict) and _is_process_poll_done(data):
                             _seal_stale_background_execs()
-                        from reply_rebuild import merge_live_steps, step_merge_key
+                        from reply_rebuild import extract_final_answer, merge_live_steps, synthesize_early_final_from_steps
+                        from skill_display import should_emit_early_final
                         from tool_summarize import polish_ai4drug_exec_steps
 
                         merged = polish_ai4drug_exec_steps(
                             merge_live_steps([s for s in live_steps if isinstance(s, dict)])
                         )
-                        for s in merged:
-                            key = step_merge_key(s)
-                            if not key:
-                                continue
-                            prev = polished_snapshot.get(key)
-                            if prev is None:
-                                polished_snapshot[key] = dict(s)
-                                yield _sse("step", s)
-                            elif (
-                                prev.get("status"),
-                                prev.get("result"),
-                                prev.get("detail"),
-                            ) != (
-                                s.get("status"),
-                                s.get("result"),
-                                s.get("detail"),
-                            ):
-                                polished_snapshot[key] = dict(s)
-                                yield _sse("step", {**s, "is_result_update": True})
+                        if not synthesized_final_emitted and not _has_running_tools():
+                            blob = sanitize_user_facing_text(
+                                "".join(chunks) + "".join(followup_texts)
+                            )
+                            if len(extract_final_answer(blob).strip()) < 8:
+                                early_final = ""
+                                if should_emit_early_final(merged, req.selected_skill_name):
+                                    early_final = synthesize_early_final_from_steps(
+                                        merged,
+                                        req.selected_skill_name,
+                                    )
+                                if early_final:
+                                    delta = f"\n\n## 最终回答\n\n{early_final}\n"
+                                    chunks.append(delta)
+                                    followup_texts.append(delta)
+                                    append_process_event(
+                                        session_id_str, {"type": "delta", "content": delta}
+                                    )
+                                    visible = client_stream.feed(delta)
+                                    if visible:
+                                        await queue.put(("delta", {"content": visible}))
+                                    synthesized_final_emitted = True
+                        sig = json.dumps(
+                            [
+                                (
+                                    s.get("tool_call_id"),
+                                    s.get("record_id"),
+                                    s.get("kind"),
+                                    s.get("thinking_seq"),
+                                    s.get("status"),
+                                    s.get("result"),
+                                    s.get("detail"),
+                                    s.get("display_block"),
+                                )
+                                for s in merged
+                            ],
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                        if sig != last_steps_sig:
+                            last_steps_sig = sig
+                            yield _sse("steps", {"steps": merged})
                         continue
                     yield _sse(kind, data)  # type: ignore[arg-type]
                     continue
@@ -851,8 +887,11 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                     if content_ended_at is None:
                         content_ended_at = now
                     waited = now - content_ended_at
-                    # 无 running 工具时：短等待即可结束，避免蛋白/对接完成后空等 10 分钟
-                    if not _has_running_tools() and waited >= idle_after_tools_sec:
+                    effective_idle = idle_after_tools_sec
+                    if synthesized_final_emitted and not _has_running_tools():
+                        effective_idle = min(effective_idle, 0.6)
+                    # 无 running 工具时：短等待即可结束，避免蛋白/对接完成后空等
+                    if not _has_running_tools() and waited >= effective_idle:
                         break
                     if waited >= max_wait_after_content_sec:
                         break
@@ -874,10 +913,14 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         if merged_steps:
             from tool_summarize import polish_ai4drug_exec_steps
 
-            merged_steps = polish_ai4drug_exec_steps(merged_steps)
+            merged_steps = polish_ai4drug_exec_steps(merged_steps, reply=raw_reply)
             merged_steps = await normalize_steps_zh(merged_steps)
         reply = (
-            rebuild_reply_with_live_steps(raw_reply, merged_steps)
+            rebuild_reply_with_live_steps(
+                raw_reply,
+                merged_steps,
+                skill_name=req.selected_skill_name,
+            )
             if merged_steps and raw_reply and not stream_error
             else raw_reply
         )
@@ -909,6 +952,7 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             "reply": reply,
             "error": stream_error,
             "ok": stream_error is None,
+            "steps": merged_steps,
         }
         yield _sse(PROCESS_LOG_DONE_TYPE, client_done)
         yield _sse("done", client_done)
@@ -928,21 +972,9 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/api/sessions/{session_id}/process-log", response_model=ProcessLogSnapshotOut)
-async def get_process_log_snapshot(session_id: str):
+async def get_process_log_snapshot(session_id: str, db: AsyncSession = Depends(get_db)):
     """返回过程日志快照；刷新页面后用于恢复未完成的分析过程。"""
-    snap = read_process_log_snapshot(session_id)
-    if snap.pop("needs_heal", False):
-        append_process_done(
-            session_id,
-            reply=str(snap.get("reply") or ""),
-            steps=snap.get("steps") or [],
-        )
-        snap = read_process_log_snapshot(session_id)
-    snap.pop("done_in_file", None)
-    snap.pop("needs_heal", None)
-    steps = snap.get("steps") or []
-    if steps:
-        snap["steps"] = await normalize_steps_zh(steps)
+    snap = await prepare_process_log_snapshot(session_id, db)
     return ProcessLogSnapshotOut(**snap)
 
 
@@ -959,6 +991,7 @@ async def stream_process_log(session_id: str, after: int = 0):
         offset = max(0, after)
         idle_rounds = 0
         max_idle = settings.stream_max_sec / settings.stream_poll_interval_sec
+        tail_stream = ClientStreamFilter()
         if path and path.exists():
             try:
                 head = path.read_text(encoding="utf-8", errors="replace")[:65536]
@@ -1010,6 +1043,15 @@ async def stream_process_log(session_id: str, after: int = 0):
                                 # 旧日志里英文思考：读出时再译一次
                                 if row.get("type") == "step" and row.get("kind") == "thinking":
                                     row = await normalize_step_zh(row)
+                                elif row.get("type") == "step":
+                                    from tool_summarize import polish_ai4drug_exec_step
+
+                                    row = polish_ai4drug_exec_step(row)
+                                elif row.get("type") == "delta":
+                                    visible = tail_stream.feed(str(row.get("content") or ""))
+                                    if not visible:
+                                        continue
+                                    row = {**row, "content": visible}
                                 event_type = row.get("type", "log")
                                 yield _sse(event_type, row)
                                 if is_process_log_done(row):

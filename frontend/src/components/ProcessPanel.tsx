@@ -5,10 +5,20 @@ import { collectPdbIdsFromProcessSteps, resolveDisplayAnswer } from '../utils/pa
 import { sortStepsForDisplay } from '../utils/sortSteps'
 import {
   formatStepStatusLine,
+  formatToolOutputForDisplay,
+  isJsonLikeToolOutput,
   stepBadgeClass,
   stepBadgeLabel,
   stripProcessPaths,
+  thinkingFullText,
+  thinkingSummaryLine,
 } from '../utils/processStepUtils'
+import {
+  buildProcessPanelHeader,
+  countProcessPanelSteps,
+  getFinalStepListClassName,
+  getProcessPanelCardClassName,
+} from '../utils/processPanelLayout'
 import AssistantMarkdown from './AssistantMarkdown'
 import PdbStructureCards, { PdbCardsFromStepText } from './PdbStructureCards'
 
@@ -40,7 +50,37 @@ function liveToProcessSteps(live: LiveProcessStep[]): ProcessStep[] {
     inputSummary: stripProcessPaths(step.input || ''),
     resultSummary: stripProcessPaths(step.result || ''),
     detail: stripProcessPaths(step.detail || ''),
+    displayBlock: (step.display_block || '').trim(),
   }))
+}
+
+function stepBodyLength(step: Pick<ProcessStep, 'detail' | 'resultSummary' | 'inputSummary'>): number {
+  return (step.detail || step.resultSummary || step.inputSummary || '').length
+}
+
+function mergeDisplaySteps(parsed: ProcessStep[], live: ProcessStep[]): ProcessStep[] {
+  if (!live.length) return parsed
+  if (!parsed.length) return live
+  const len = Math.max(parsed.length, live.length)
+  return Array.from({ length: len }, (_, i) => {
+    const p = parsed[i]
+    const l = live[i]
+    if (!p) return l
+    if (!l) return p
+    if (p.type === '思考' || l.type === '思考') {
+      if (stepBodyLength(l) > stepBodyLength(p)) {
+        return { ...l, index: p.index }
+      }
+      return p
+    }
+    if (!stepBodyLength(p) && stepBodyLength(l)) {
+      return { ...l, index: p.index }
+    }
+    if ((l.displayBlock || '').length > (p.displayBlock || '').length) {
+      return { ...p, ...l, index: p.index, displayBlock: l.displayBlock }
+    }
+    return p
+  })
 }
 
 function isPdbStep(step: ProcessStep): boolean {
@@ -53,19 +93,21 @@ function ExpandedFields({ step }: { step: ProcessStep }) {
   const name = step.name?.trim() || ''
   const showTitle = Boolean(title)
   const showName = Boolean(name) && name !== title
-  const input = step.inputSummary || ''
-  const result = step.resultSummary || ''
-  const detail = step.detail || ''
+  const input = formatToolOutputForDisplay(step.inputSummary || '')
+  const result = formatToolOutputForDisplay(step.resultSummary || '')
+  const detail = formatToolOutputForDisplay(step.detail || '')
 
   if (step.type === '思考') {
-    const content = detail || result || input
+    const content = thinkingFullText({
+      detail: step.detail,
+      result: step.resultSummary,
+      input: step.inputSummary,
+      title: step.title,
+    })
     return (
-      <div className="space-y-1 border-t border-slate-100 px-3 py-2 text-xs text-slate-600">
+      <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-600">
         {content && (
-          <div className="whitespace-pre-wrap">
-            <span className="font-medium text-slate-500">内容：</span>
-            {content}
-          </div>
+          <div className="whitespace-pre-wrap rounded bg-white/80 px-2 py-1.5 text-slate-700">{content}</div>
         )}
       </div>
     )
@@ -97,8 +139,8 @@ function ExpandedFields({ step }: { step: ProcessStep }) {
           <div className="whitespace-pre-wrap rounded bg-white/80 px-2 py-1.5 text-slate-700">
             {(() => {
               const body = detail || result
-              if (/^[\s{[]/.test(body) || body.includes('"success"')) {
-                return result && !/^[\s{[]/.test(result) ? result : '（已完成，详见上方摘要）'
+              if (isJsonLikeToolOutput(body)) {
+                return result && !isJsonLikeToolOutput(result) ? result : '（已完成，详见上方摘要）'
               }
               return body.length > 280 ? `${body.slice(0, 277)}…` : body
             })()}
@@ -131,24 +173,20 @@ export default function ProcessPanel({ parsed, liveSteps }: Props) {
         resultSummary: stripProcessPaths(s.resultSummary),
         detail: stripProcessPaths(s.detail),
       }))
-      const parsedHasResults = fromParsed.some((s) => s.resultSummary || s.detail)
-      const liveHasResults = fromLive.some((s) => s.resultSummary || s.detail)
-      if (!parsedHasResults && liveHasResults) return fromLive
+      if (fromLive.length > 0) {
+        return mergeDisplaySteps(fromParsed, fromLive)
+      }
       return fromParsed
     }
     if (liveSteps && liveSteps.length > 0) return fromLive
     return []
   }, [liveSteps, parsed])
 
-  const actionCount = useMemo(
-    () => steps.filter((s) => s.type === '工具' || s.type === '技能').length,
-    [steps],
-  )
-  const skillCount = useMemo(() => steps.filter((s) => s.type === '技能').length, [steps])
-  const thinkCount = steps.length - actionCount
-  const hasProcess = steps.length > 0 || parsed.hasProcess
+  const stepCounts = useMemo(() => countProcessPanelSteps(steps), [steps])
+  const header = useMemo(() => buildProcessPanelHeader(stepCounts), [stepCounts])
   const displayAnswer = resolveDisplayAnswer(parsed, steps)
   const pdbIds = useMemo(() => collectPdbIdsFromProcessSteps(steps), [steps])
+  const hasProcess = steps.length > 0 || parsed.hasProcess
 
   if (!hasProcess) {
     const plain = resolveDisplayAnswer(parsed, [])
@@ -159,16 +197,9 @@ export default function ProcessPanel({ parsed, liveSteps }: Props) {
     )
   }
 
-  const header =
-    skillCount > 0
-      ? `分析过程 · ${steps.length} 步（思考 ${thinkCount} · 技能 ${skillCount} · 工具 ${actionCount - skillCount}）`
-      : thinkCount > 0
-        ? `分析过程 · ${steps.length} 步（思考 ${thinkCount} · 工具 ${actionCount}）`
-        : `分析过程 · ${actionCount} 个工具`
-
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white/80">
+      <div className={getProcessPanelCardClassName()}>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -179,10 +210,17 @@ export default function ProcessPanel({ parsed, liveSteps }: Props) {
         </button>
 
         {open && (
-          <div className="space-y-2 border-t border-slate-100 px-3 py-3">
-            {steps.map((step) => {
+          <div className={getFinalStepListClassName()}>
+            {steps.map((step, idx) => {
               const isExpanded = expanded[step.index] ?? false
+              const stepKey = `${idx}-${step.index}-${step.title}-${step.name}`
               const isAction = step.type === '工具' || step.type === '技能'
+              const thinkingFull = thinkingFullText({
+                detail: step.detail,
+                result: step.resultSummary,
+                input: step.inputSummary,
+                title: step.title,
+              })
               const line = isAction
                 ? `${formatStepStatusLine({
                     kind: step.type === '技能' ? 'skill' : 'tool',
@@ -205,23 +243,33 @@ export default function ProcessPanel({ parsed, liveSteps }: Props) {
                       ? ` → ${step.resultSummary.slice(0, 100)}`
                       : ''
                   }`
-                : (step.detail || step.resultSummary || step.inputSummary || step.title).slice(0, 300) +
-                  ((step.detail || step.resultSummary || '').length > 300 ? '…' : '')
+                : thinkingSummaryLine(thinkingFull)
+              const thinkingSummary = isAction ? '' : thinkingSummaryLine(thinkingFull)
+              const hasThinkingDetail =
+                !isAction &&
+                thinkingFull.replace(/\s+/g, ' ').trim().length >
+                  thinkingSummary.replace(/…$/, '').trim().length + 8
+              const canExpand = isAction || hasThinkingDetail
 
               return (
-                <div key={step.index} className="rounded-lg border border-slate-100 bg-slate-50/80">
+                <div key={stepKey} className="rounded-lg border border-slate-100 bg-slate-50/80">
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      if (!canExpand) return
                       setExpanded((prev) => ({ ...prev, [step.index]: !prev[step.index] }))
-                    }
-                    className="flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-white"
+                    }}
+                    className={`flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm text-slate-700 ${
+                      canExpand ? 'hover:bg-white' : ''
+                    }`}
                   >
                     <StepBadge type={step.type} name={step.name} title={step.title} />
                     <span className="min-w-0 flex-1 leading-snug whitespace-pre-wrap">{line}</span>
-                    <span className="shrink-0 text-xs text-slate-400">{isExpanded ? '▾' : '▸'}</span>
+                    {canExpand && (
+                      <span className="shrink-0 text-xs text-slate-400">{isExpanded ? '▾' : '▸'}</span>
+                    )}
                   </button>
-                  {isExpanded && <ExpandedFields step={step} />}
+                  {isExpanded && canExpand && <ExpandedFields step={step} />}
                 </div>
               )
             })}

@@ -55,15 +55,21 @@ def _meta_path(session_id: str) -> Path:
     return meta_dir / f"{session_id}.json"
 
 
-def load_sticky_agent(session_id: str) -> str | None:
+def _read_route_meta(session_id: str) -> dict | None:
     path = _meta_path(session_id)
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    agent = str(data.get("openclaw_agent_id") or "").strip()
+
+
+def load_sticky_agent(session_id: str) -> str | None:
+    meta = _read_route_meta(session_id)
+    if not meta:
+        return None
+    agent = str(meta.get("openclaw_agent_id") or "").strip()
     return agent or None
 
 
@@ -92,37 +98,50 @@ def is_ai4drug_skill(
     return False
 
 
+def _route_from_meta(sticky: str, meta: dict | None) -> tuple[str, str]:
+    model = f"openclaw:{sticky}" if not sticky.startswith("openclaw:") else sticky
+    if meta:
+        model = str(meta.get("openclaw_model") or model)
+        agent = str(meta.get("openclaw_agent_id") or sticky)
+    else:
+        agent = sticky
+        model = f"openclaw:{agent}" if not model.startswith("openclaw:") else model
+    return agent, model
+
+
+def _default_route(wants_ai4drug: bool) -> tuple[str, str]:
+    if wants_ai4drug:
+        return settings.openclaw_ai4drug_agent_id, settings.openclaw_ai4drug_model
+    agent = settings.openclaw_agent_id
+    model = settings.openclaw_model
+    if model.strip() in ("", "openclaw"):
+        model = f"openclaw:{agent}"
+    return agent, model
+
+
 def resolve_openclaw_route(
     session_id: str,
     *,
     skill_name: str | None = None,
     skill_category: str | None = None,
 ) -> tuple[str, str, str]:
-    """Return (agent_id, model, user). Sticky: once chosen, never switch mid-session."""
+    """Return (agent_id, model, user).
+
+    Sticky by default so tool context stays on one OpenClaw agent/user.
+    Exception: upgrade main → ai4drug when the user explicitly selects an AI4Drug skill.
+    """
     user = openclaw_user_id(session_id)
+    wants_ai4drug = is_ai4drug_skill(skill_name, skill_category)
+    ai4drug_agent = settings.openclaw_ai4drug_agent_id
+
     sticky = load_sticky_agent(session_id)
     if sticky:
-        model = f"openclaw:{sticky}" if not sticky.startswith("openclaw:") else sticky
-        # sticky stores agent id; model from meta if present
-        path = _meta_path(session_id)
-        try:
-            meta = json.loads(path.read_text(encoding="utf-8"))
-            model = str(meta.get("openclaw_model") or model)
-            agent = str(meta.get("openclaw_agent_id") or sticky)
-        except (OSError, json.JSONDecodeError):
-            agent = sticky
-            model = f"openclaw:{agent}"
-        return agent, model, user
+        if wants_ai4drug and sticky != ai4drug_agent:
+            agent, model = ai4drug_agent, settings.openclaw_ai4drug_model
+            save_sticky_agent(session_id, agent, model=model)
+            return agent, model, user
+        return *_route_from_meta(sticky, _read_route_meta(session_id)), user
 
-    if is_ai4drug_skill(skill_name, skill_category):
-        agent = settings.openclaw_ai4drug_agent_id
-        model = settings.openclaw_ai4drug_model
-    else:
-        agent = settings.openclaw_agent_id
-        model = settings.openclaw_model
-        # normalize bare "openclaw" → openclaw:<agent>
-        if model.strip() in ("", "openclaw"):
-            model = f"openclaw:{agent}"
-
+    agent, model = _default_route(wants_ai4drug)
     save_sticky_agent(session_id, agent, model=model)
     return agent, model, user

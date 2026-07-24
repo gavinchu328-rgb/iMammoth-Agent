@@ -37,6 +37,124 @@ export function stripProcessPaths(text: string): string {
     .trim()
 }
 
+const RUNTIME_NOISE_PATTERNS = [
+  /command\s+still\s+running/i,
+  /process\s+still\s+running/i,
+  /\(no\s+new\s+output\)/i,
+  /use\s+process\s*\(\s*list\/poll/i,
+  /session\s+kind-/i,
+  /命令仍在运行/,
+  /进程仍在运行/,
+  /需要轮询/,
+  /让我再等/,
+  /再轮询/,
+  /<tool_call/i,
+]
+
+export function isExecOutputNoise(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  const low = t.toLowerCase()
+  if (low.includes('autodock vina') && (low.includes('center_x') || low.includes('size_x'))) return true
+  if (low.includes('center_x') && low.includes('size_x') && (low.includes('center_y') || low.includes('exhaustiveness'))) {
+    return true
+  }
+  if (low.includes('data_pre_processing.py')) return true
+  return false
+}
+
+export function isProcessDisplayNoise(text: string): boolean {
+  return isProcessRuntimeNoise(text) || isExecOutputNoise(text)
+}
+
+const AUX_TOOL_NAMES = new Set([
+  'exec',
+  '执行命令',
+  '命令工具',
+  '读取报告',
+  '后台进程',
+  'process',
+  '等待后台任务',
+  'sessions_history',
+  'session_history',
+])
+
+export function isAuxiliaryToolStep(step: Pick<LiveProcessStep, 'name' | 'title'>): boolean {
+  const name = (step.name || '').trim()
+  const title = (step.title || '').trim()
+  return AUX_TOOL_NAMES.has(name) || AUX_TOOL_NAMES.has(title)
+}
+
+export function isProcessRuntimeNoise(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  if (
+    [
+      '命令仍在后台运行',
+      '请等待工具返回完整结果',
+      '后台任务仍在运行',
+      '命令仍在运行，需要轮询以确认完成。',
+      '进程仍在运行，让我再等一会儿。',
+      '进程仍在运行。让我再轮询一次。',
+    ].includes(t)
+  ) {
+    return true
+  }
+  return RUNTIME_NOISE_PATTERNS.some((re) => re.test(t))
+}
+
+export function stripProcessRuntimeNoise(text: string): string {
+  const raw = (text || '').trim()
+  if (!raw) return ''
+  if (isProcessDisplayNoise(raw)) return ''
+  return raw
+    .split('\n')
+    .map((ln) => ln.trim())
+    .filter((ln) => ln && !isProcessDisplayNoise(ln))
+    .join('\n')
+    .trim()
+}
+
+/** 工具原始 JSON / structuredContent 不应直接展示在前台（与后端 _looks_like_json_leak 对齐）。 */
+export function isJsonLikeToolOutput(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  if ((/^\d+\.\s+\S/m).test(t)) return false
+  if (/^[\s{[]/.test(t)) return true
+  if (/structuredContent/i.test(t)) return true
+  if (/chembl_|opentargets/i.test(t) && t.length > 40) return true
+  if (t.includes('"success"') && (t.includes('{') || t.length > 80)) return true
+  if (/"tool"\s*:/.test(t) && (t.includes('"molecules"') || t.includes('"ligands"'))) return true
+  if (/^[^"\n]*"\w+"\s*:/.test(t) && t.length > 36) return true
+  return false
+}
+
+export function formatToolOutputForDisplay(text: string, fallback = ''): string {
+  if (!text || isJsonLikeToolOutput(text)) return fallback
+  return text
+}
+
+export function thinkingFullText(
+  step: Pick<LiveProcessStep, 'detail' | 'result' | 'input' | 'title'>,
+): string {
+  return stripProcessPaths(step.detail || step.result || step.input || step.title || '')
+}
+
+/** 思考步骤折叠行：保留换行，仅压缩行内空白。 */
+export function thinkingSummaryLine(text: string, maxLen = 96): string {
+  const normalized = text.replace(/\r\n/g, '\n').trim()
+  if (!normalized) return '整理思路中…'
+  if (isProcessRuntimeNoise(normalized)) return '整理思路中…'
+  const firstParagraph = normalized.split(/\n\s*\n/)[0]?.trim() || normalized
+  const lines = firstParagraph
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+  const preview = (lines.length > 0 ? lines.slice(0, 4).join('\n') : firstParagraph).trim()
+  if (preview.length <= maxLen) return preview
+  return `${preview.slice(0, maxLen - 1)}…`
+}
+
 function normalizeToolKey(name: string): string {
   return (name || '').trim().toLowerCase().replace(/-/g, '_')
 }
@@ -64,7 +182,7 @@ export function isWebToolStep(step: Pick<LiveProcessStep, 'kind' | 'name' | 'tit
 export function formatActionToolLabel(name: string, title?: string): string {
   const web = formatWebToolLabel(name, title)
   if (web) return web
-  const raw = (name || title || '').trim()
+  const raw = normalizeAi4DrugToolLabel((name || title || '').trim())
   return raw.replace(/工具$/, '') || '工具'
 }
 
@@ -103,14 +221,70 @@ export function formatStepStatusLine(
   return `${label}执行完成`
 }
 
-export function isActionStep(kind: LiveProcessStep['kind']): boolean {
-  return kind === 'tool' || kind === 'skill' || kind === 'web'
+const MCP_TOOL_NAME_HINTS = [
+  'ai4drug',
+  'mcporter',
+  '蛋白质获取',
+  '口袋预测',
+  '分子对接',
+  '受体准备',
+  '配体准备',
+  '对接盒配置',
+  '3d构象生成',
+  '靶点发现',
+  '分子设计',
+  'admet',
+  '逆合成',
+  '流程汇总',
+] as const
+
+const AI4DRUG_TOOL_LABELS: Record<string, string> = {
+  target_discovery: '靶点发现',
+  protein_acquisition: '蛋白质获取',
+  pocket_prediction: '口袋预测',
+  molecule_design: '分子设计',
+  conformer_generation: '3D构象生成',
+  receptor_preparation: '受体准备',
+  ligand_preparation: '配体准备',
+  docking_box_config: '对接盒配置',
+  molecular_docking: '分子对接',
+  molecule_evaluation: 'ADMET评估',
+  retrosynthesis: '逆合成分析',
+  pipeline_summary: '流程汇总',
 }
 
-export function isMcpToolStep(step: Pick<LiveProcessStep, 'kind' | 'name' | 'title'>): boolean {
-  if (step.kind === 'skill' || isWebToolStep(step)) return false
-  const raw = `${step.name} ${step.title}`.toLowerCase()
-  return raw.includes('ai4drug__') || raw.includes('ai4drug')
+export function normalizeAi4DrugToolLabel(name: string): string {
+  const raw = (name || '').trim()
+  if (!raw) return raw
+  const key = raw.toLowerCase().replace(/^ai4drug__/, '').replace(/-/g, '_')
+  return AI4DRUG_TOOL_LABELS[key] || raw
+}
+
+export function isMcpToolStep(
+  step: Pick<LiveProcessStep, 'kind' | 'name' | 'title'> & { input?: string },
+): boolean {
+  if (step.kind === 'skill' || step.kind === 'thinking' || isWebToolStep(step)) return false
+  const raw = `${step.name} ${step.title} ${step.input || ''}`.toLowerCase()
+  if (raw.includes('ai4drug__') || raw.includes('ai4drug') || raw.includes('mcporter')) {
+    return true
+  }
+  return MCP_TOOL_NAME_HINTS.some((hint) => raw.includes(hint))
+}
+
+export function isActionStep(
+  stepOrKind:
+    | LiveProcessStep['kind']
+    | (Pick<LiveProcessStep, 'kind' | 'billable' | 'name' | 'title'> & { input?: string }),
+): boolean {
+  if (typeof stepOrKind === 'string') {
+    return stepOrKind === 'tool' || stepOrKind === 'skill' || stepOrKind === 'web'
+  }
+  if (stepOrKind.billable === false) return false
+  if (stepOrKind.name === '等待后台任务') return false
+  if (stepOrKind.kind === 'tool' || stepOrKind.kind === 'skill' || stepOrKind.kind === 'web') {
+    return true
+  }
+  return isMcpToolStep(stepOrKind)
 }
 
 export function stepBadgeLabel(
