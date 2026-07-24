@@ -25,12 +25,24 @@ function looksLikeCollapsedProcessDump(text: string): boolean {
 const PIPELINE_TOOL_KEYS =
   /(?:molecular_docking|ligand_preparation|conformer_generation|pocket_prediction|receptor_preparation|protein_acquisition|docking_box_config|target_discovery|molecule_design|retrosynthesis|molecule_evaluation)/i
 
+const SESSION_RETRY_MONOLOGUE =
+  /发现\s*API\s*返回了自动生成的\s*session_id|需要用正确\s*session_id\s*重试|现在用正确的\s*session_id|第二个使用正确\s*session_id\s*的\s*conformer/i
+
+const ORPHAN_EMOJI_ONLY = /^\s*(?:[\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{27BF}])+\s*$/u
+
+function looksLikeSessionRetryMonologue(text: string): boolean {
+  return SESSION_RETRY_MONOLOGUE.test((text || '').trim())
+}
+
 /** Model sometimes streams an English pipeline checklist instead of real results. */
 export function looksLikeModelPipelineChecklist(text: string): boolean {
   const t = (text || '').trim()
   if (!t) return false
   if (/等待执行/.test(t)) return true
-  if (/✅\s*步骤\s*\d+\s*完成/.test(t)) return true
+  // 分子对接等多步技能：带真实结果/报告链接的步骤摘要应保留流式展示
+  if (/kcal\/mol|Docking Score|查看报告|ai4drug-reports/i.test(t)) return false
+  if (/✅\s*\*\*步骤\s*\d+[：:][^\n*]+完成\*\*/.test(t) && t.length > 100) return false
+  if (/✅\s*步骤\s*\d+\s*完成/.test(t) && !/http|kcal|评分|score|报告/i.test(t)) return true
   if (PIPELINE_TOOL_KEYS.test(t) && (t.includes('等待') || /步骤\s*\d+\s*完成/.test(t))) {
     return true
   }
@@ -65,6 +77,33 @@ export function looksLikeProcessDump(text: string): boolean {
   return false
 }
 
+/** Remove embedded ### 步骤 tool-template blocks from multi-step stream narrative. */
+export function stripEmbeddedProcessTemplateBlocks(text: string): string {
+  let t = (text || '').trim()
+  if (!t) return ''
+  t = t
+    .replace(/###\s*步骤\s*\d+\s*·[\s\S]*?(?=\n✅\s*(?:\*\*)?步骤|\n#{1,3}\s+|\n---\s*\n|\s*$)/g, '')
+    .trim()
+  t = t.replace(/^##\s*分析过程[\s\S]*?(?=\n✅\s*(?:\*\*)?步骤)/, '').trim()
+  return t
+}
+
+function extractStepNarrativeStream(text: string): string {
+  const stepIdx = text.search(/✅\s*(?:\*\*)?步骤\s*\d+/)
+  if (stepIdx < 0) return ''
+  let narrative = text.slice(stepIdx)
+  const finalIdx = findFirstMarker(narrative, FINAL_MARKERS)
+  if (finalIdx >= 0) {
+    const marker = FINAL_MARKERS.find((m) => narrative.indexOf(m) === finalIdx) || FINAL_MARKERS[0]
+    narrative = narrative.slice(0, finalIdx) + narrative.slice(finalIdx + marker.length)
+  }
+  narrative = stripEmbeddedProcessTemplateBlocks(narrative)
+  narrative = sanitizeFinalAnswerText(narrative)
+  if (!narrative || isFinalAnswerUnusable(narrative)) return ''
+  if (looksLikeModelPipelineChecklist(narrative)) return ''
+  return narrative
+}
+
 /** Strip model process templates / JSON from streaming assistant text. */
 export function stripStreamingNoise(content: string): string {
   const raw = (content || '').trim()
@@ -86,6 +125,9 @@ export function stripStreamingNoise(content: string): string {
     return ''
   }
 
+  const stepNarrative = extractStepNarrativeStream(raw)
+  if (stepNarrative) return stepNarrative
+
   let procIdx = findFirstMarker(raw, PROCESS_MARKERS)
   if (procIdx < 0 && looksLikeCollapsedProcessDump(raw)) procIdx = 0
   if (procIdx >= 0) {
@@ -96,6 +138,8 @@ export function stripStreamingNoise(content: string): string {
   if (looksLikeProcessDump(raw)) return ''
   if (looksLikePartialProcessStream(raw)) return ''
   if (looksLikeModelPipelineChecklist(raw)) return ''
+  if (looksLikeSessionRetryMonologue(raw)) return ''
+  if (ORPHAN_EMOJI_ONLY.test(raw)) return ''
   return raw
 }
 

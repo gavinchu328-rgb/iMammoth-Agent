@@ -23,6 +23,7 @@ import {
   thinkingSummaryLine,
 } from '../utils/processStepUtils'
 import { sortStepsForDisplay } from '../utils/sortSteps'
+import { parseStreamProcessLiveSteps } from '../utils/parseProcessLog'
 import {
   buildProcessPanelHeader,
   countProcessPanelSteps,
@@ -31,6 +32,7 @@ import {
   getLiveStreamContentClassName,
   getProcessPanelCardClassName,
   getProcessPanelHeaderRowClassName,
+  resolveLiveSummaryDisplay,
 } from '../utils/processPanelLayout'
 
 interface Props {
@@ -103,7 +105,13 @@ export default function LiveProcessPanel({
     streamRaw,
     awaitingFinalize,
   })
-  const displaySteps = useMemo(() => sortStepsForDisplay(steps), [steps])
+  const displaySteps = useMemo(() => {
+    const sorted = sortStepsForDisplay(steps)
+    if (sorted.length > 0) return sorted
+    const raw = (streamRaw || content || '').trim()
+    if (!raw.includes('## 分析过程')) return sorted
+    return parseStreamProcessLiveSteps(raw)
+  }, [steps, streamRaw, content])
   const summaryAbove = useMemo(() => {
     const raw = (streamRaw || content || '').trim()
     if (!raw) return ''
@@ -113,12 +121,10 @@ export default function LiveProcessPanel({
     return ''
   }, [content, streamRaw])
 
-  const summaryDisplay = useMemo(() => {
-    const text = summaryAbove.trim()
-    if (!text) return ''
-    if (looksLikeModelPipelineChecklist(text)) return ''
-    return text
-  }, [summaryAbove])
+  const summaryDisplay = useMemo(
+    () => resolveLiveSummaryDisplay(summaryAbove, looksLikeModelPipelineChecklist),
+    [summaryAbove],
+  )
 
   const activity = useMemo(
     () => deriveLiveActivity(steps, skillName, { streamFinalReady: isTailFormatting }),
@@ -132,8 +138,7 @@ export default function LiveProcessPanel({
   const stepCounts = useMemo(() => countProcessPanelSteps(displaySteps), [displaySteps])
   const header = useMemo(() => buildProcessPanelHeader(stepCounts), [stepCounts])
 
-  const hasStreamAbove = Boolean(summaryDisplay)
-  const stepListClass = getLiveStepListClassName({ hasStreamAbove, isTailFormatting })
+  const stepListClass = getLiveStepListClassName({ isTailFormatting })
 
   const stepListRef = useRef<HTMLDivElement>(null)
   const stepsScrollKey = useMemo(

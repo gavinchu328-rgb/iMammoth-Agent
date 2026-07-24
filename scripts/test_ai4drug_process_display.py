@@ -88,11 +88,11 @@ PROMPTS = {
     ),
     "ADMET评估": (
         "conformer_generation(gefitinib_mol0, SMILES CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl) + molecule_evaluation；"
-        "猛犸 session_id；禁止联网查 SMILES；--timeout 600000。"
+        "猛犸 session_id 两步一致，必须显式传入；禁止因响应 session_id 重试；禁止尾随 JSON；--timeout 600000。"
     ),
     "逆合成分析": (
-        "先 conformer_generation（传猛犸 session_id，molecules id 如 gefitinib_mol0 + SMILES），"
-        "再 retrosynthesis(molecule_ids 与构象 id 一致)。"
+        "conformer_generation(gefitinib_mol0, SMILES CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl) + retrosynthesis；"
+        "猛犸 session_id 两步一致；禁止联网查 SMILES；params 放 params 对象；--timeout 600000。"
     ),
 }
 

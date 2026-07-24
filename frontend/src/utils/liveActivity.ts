@@ -86,6 +86,8 @@ export function isLivePanelTailFormatting(
   options?: { streamRaw?: string; awaitingFinalize?: boolean },
 ): boolean {
   if (hasRunningProcessSteps(steps)) return false
+  // 无真实工具步骤时不进入「整理最终结果」，避免模型编造 ## 最终回答 后长期卡住
+  if (!hasCompletedActionSteps(steps)) return false
   if (isStreamPhaseComplete(content, options?.streamRaw)) return true
   const raw = (options?.streamRaw || '').trim()
   if (options?.awaitingFinalize && raw && (raw.includes('## 最终回答') || raw.includes('##最终回答'))) {

@@ -257,8 +257,10 @@ def _build_openclaw_messages(
                     "禁止 sessions_spawn 开新对话，否则工具上下文会丢失。\n"
                     "调用 ai4drug MCP 工具时，必须把 session_id 参数设为该 UUID 字符串，禁止传 null。\n"
                     f"通过 exec 调用 mcporter 时，所有 ai4drug 工具必须显式加 --timeout {mcp_to}（毫秒，即 10 分钟；勿写成 600）。\n"
-                    "含 conformer_generation、ligand_preparation、molecular_docking、pocket_prediction 等；"
-                    "conformer_generation 不传 session_id 会创建孤立数据会话，导致口袋预测/对接失败。\n"
+                    "含 conformer_generation、molecule_evaluation、ligand_preparation、molecular_docking、pocket_prediction 等；"
+                    "conformer_generation 不传 session_id 会创建孤立数据会话，导致后续评估/对接失败。\n"
+                    "若 conformer 响应 JSON 里的 session_id 为时间戳格式（如 20260724...），"
+                    "只要调用时已传入猛犸 UUID 即视为成功，后续工具一律用猛犸 UUID，禁止因此重试 conformer。\n"
                     "protein_acquisition / receptor_preparation / pocket_prediction 的 target_ids "
                     "必须使用 `基因符号_PDBID` 格式（例如 EGFR_3W2S），不能仅传基因符号。\n"
                     "molecular_docking 的 molecule_ids 必须为 `{pocket_id}_mol0`（如 EGFR_3W2S_pocket1_mol0），"
@@ -281,6 +283,7 @@ def _build_openclaw_messages(
                 "只执行上述两步；禁止靶点发现、禁止 web_search 查 SMILES、"
                 "禁止 protein_acquisition / pocket_prediction（除非用户明确说 session 里还没有口袋）。\n"
                 "禁止受体准备、对接盒配置、分子对接；「对接配体」仅指生成 PDBQT，不是执行对接。\n"
+                "最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。\n"
                 "用户只给药物名时：吉非替尼 SMILES 用 CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl；"
                 "未给 pocket 时默认 EGFR_3W2S_pocket1_mol0，若 session 无口袋才补 protein_acquisition + pocket_prediction。\n"
                 f"所有 mcporter 调用必须加 --timeout {mcp_to}；禁止 sessions_spawn。"
@@ -312,7 +315,9 @@ def _build_openclaw_messages(
                 "用户文本里写了 pocket_id ≠ session 磁盘上已有口袋；新会话/本对话尚未执行过 pocket_prediction 时：\n"
                 "  先 protein_acquisition(target_ids=[推断的 target_id]) → pocket_prediction → docking_box_config；\n"
                 "  不要先单独调 docking_box_config 等报「尚无口袋」再补步骤。\n"
-                "禁止 sessions_spawn；禁止 web_search；用户已给 EGFR/3W2S/pocket_id 时禁止追问 PDB。"
+                "禁止 sessions_spawn；禁止 web_search；用户已给 EGFR/3W2S/pocket_id 时禁止追问 PDB。\n"
+                "必须通过 exec 调用 mcporter 执行工具，禁止仅凭记忆编造 ## 分析过程 或跳过工具调用。\n"
+                "最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。"
             )
         elif selected == "分子对接":
             extra = (
@@ -326,7 +331,8 @@ def _build_openclaw_messages(
                 "6) ligand_preparation：molecule_ids 与上一步 id 完全一致；\n"
                 "7) molecular_docking：molecule_ids 同上；禁止用 gefitinib/药物名 作为 molecule_id。\n"
                 "吉非替尼 SMILES：CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl。\n"
-                "用户已给 EGFR/PDB/药物名时禁止靶点发现；禁止在未对接成功前调用 pipeline_summary。"
+                "用户已给 EGFR/PDB/药物名时禁止靶点发现；禁止在未对接成功前调用 pipeline_summary。\n"
+                "最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。"
             )
         elif selected == "受体准备":
             extra = (
@@ -343,18 +349,27 @@ def _build_openclaw_messages(
         elif selected == "ADMET评估":
             extra = (
                 "\nADMET 评估本技能仅两步：conformer_generation → molecule_evaluation；禁止靶点发现、对接、联网查 SMILES。\n"
-                f"全程 session_id 必须为当前猛犸 UUID；mcporter 加 --timeout {mcp_to}。\n"
+                f"全程 session_id 必须为当前猛犸 UUID（两步同一 UUID，禁止省略，禁止用 conformer 返回的时间戳 session）；"
+                f"mcporter 加 --timeout {mcp_to}。\n"
                 "用户已给 SMILES 时：禁止 web_search / web_fetch / tavily；直接用给定 SMILES，不要自行编造或上网核对。\n"
                 "用户只给药物名时：吉非替尼 SMILES 用 CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl，id=gefitinib_mol0。\n"
-                "conformer_generation：molecules=[{id, smiles}]；多分子时用 mcporter --args-file 传 JSON，不要 shell 内嵌长 JSON。\n"
-                "molecule_evaluation：molecule_ids 与构象 id 完全一致。禁止 sessions_spawn。"
+                "conformer_generation 必须显式传 session_id（建议 mcporter --args-file 传 JSON，含 session_id 与 molecules）；"
+                "若构象已生成，禁止因响应 session_id 格式不同而重试。\n"
+                "molecule_evaluation：molecule_ids 与构象 id 完全一致。禁止 sessions_spawn；"
+                "禁止输出「完整结构化数据」或尾随 JSON；等工具完整返回后再总结。"
             )
         elif selected == "逆合成分析":
             extra = (
-                "\n逆合成分析正确流程：\n"
-                "1) conformer_generation：传猛犸 session_id，molecules=[{id: gefitinib_mol0, smiles: ...}]；\n"
-                "2) retrosynthesis：molecule_ids=[gefitinib_mol0]，同一 session_id；\n"
-                "禁止 sessions_spawn；禁止用后台 process 轮询代替工具返回；等工具完整返回后再总结。"
+                "\n逆合成分析本技能仅两步：conformer_generation → retrosynthesis；禁止靶点发现、对接、联网查 SMILES。\n"
+                f"全程 session_id 必须为当前猛犸 UUID（两步同一 UUID，禁止省略，禁止用 conformer 返回的时间戳 session）；"
+                f"mcporter 加 --timeout {mcp_to}。\n"
+                "用户已给 SMILES 时：禁止 web_search / web_fetch / tavily；直接用给定 SMILES，不要自行编造或上网核对。\n"
+                "吉非替尼 SMILES 用 CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl，id=gefitinib_mol0；禁止声称该 SMILES 与吉非替尼不符。\n"
+                "conformer_generation：molecules=[{id, smiles}]，method/num_conformers 等必须放在 params 对象内，"
+                "不要平铺为顶层参数；复杂参数用 mcporter --args-file 传 JSON。\n"
+                "retrosynthesis：molecule_ids 与构象 id 完全一致。禁止 sessions_spawn；"
+                "禁止用后台 process 轮询代替工具返回；等工具完整返回后再总结。"
+                "若工具返回 no synthesis routes found，如实告知未找到路线，禁止编造参考合成路线或文献工艺。"
             )
         elif selected == "口袋预测":
             extra = (

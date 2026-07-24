@@ -33,6 +33,8 @@ function buildSkillSystemPrompt(skill: Skill) {
       'session_id 必须用当前猛犸 UUID；pocket_ids 用完整 pocket_id（如 EGFR_3W2S_pocket1）。',
       '用户写了 pocket_id 只表示目标口袋名称，不等于本会话已有口袋数据。',
       '本对话尚未执行 pocket_prediction 时：先 protein_acquisition(从 pocket_id 推断 EGFR_3W2S) → pocket_prediction → docking_box_config；不要先调 docking_box_config 等失败。',
+      '必须通过 exec 调用 mcporter 执行工具，禁止仅凭记忆编造 ## 分析过程 或跳过工具调用。',
+      '最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。',
       '用户已给 EGFR/3W2S/pocket_id 时禁止追问；所有 mcporter --timeout 600000；禁止 sessions_spawn。',
     )
   }
@@ -44,6 +46,7 @@ function buildSkillSystemPrompt(skill: Skill) {
       'conformer_generation 的 molecules[].id 必须为 `{pocket_id}_mol0`（如 EGFR_3W2S_pocket1_mol0），禁止用 gefitinib 等药物名。',
       'ligand_preparation 与 molecular_docking 的 molecule_ids 必须与构象 id 完全一致。',
       '吉非替尼 SMILES：CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl。禁止靶点发现；对接成功前禁止 pipeline_summary。',
+      '最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。',
     )
   }
   if (skill.name === '配体准备') {
@@ -54,6 +57,7 @@ function buildSkillSystemPrompt(skill: Skill) {
       '用户已给 SMILES 与 pocket_id / molecule id 时：只执行上述两步；禁止靶点发现、禁止 web_search、禁止受体准备/对接盒/分子对接。',
       '用户只给药物名时：吉非替尼 SMILES 用 CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl；未给 pocket 默认 EGFR_3W2S_pocket1_mol0。',
       '仅当 session 确认无口袋时才补 protein_acquisition + pocket_prediction。所有 mcporter 加 --timeout 600000；禁止 sessions_spawn。',
+      '最终回答用表格+报告链接即可；禁止输出「完整结构化数据」或 ```json 工具原始返回。',
     )
   }
   if (skill.name === '受体准备') {
@@ -69,16 +73,21 @@ function buildSkillSystemPrompt(skill: Skill) {
   if (skill.name === 'ADMET评估') {
     lines.push(
       '本技能仅两步：conformer_generation → molecule_evaluation；禁止靶点发现、分子对接、联网查 SMILES。',
-      'session_id 必须用当前猛犸 UUID；用户已给 SMILES 时禁止 web_search/web_fetch/tavily，不要编造 SMILES。',
+      'session_id 必须用当前猛犸 UUID（两步同一 UUID，禁止用 conformer 返回的时间戳 session）；用户已给 SMILES 时禁止 web_search/web_fetch/tavily，不要编造 SMILES。',
       '吉非替尼 SMILES：CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl，id=gefitinib_mol0。',
-      '多分子或复杂参数用 mcporter --args-file 传 JSON；molecule_evaluation 的 molecule_ids 与构象 id 一致。',
-      '禁止 sessions_spawn；所有 mcporter --timeout 600000。',
+      'conformer 必须显式传 session_id（建议 mcporter --args-file）；构象已生成则禁止因响应 session_id 不同而重试。',
+      'molecule_evaluation 的 molecule_ids 与构象 id 一致；禁止输出完整结构化数据/尾随 JSON。',
+      '禁止 sessions_spawn；所有 mcporter --timeout 600000；等工具完整返回后再总结。',
     )
   }
   if (skill.name === '逆合成分析') {
     lines.push(
-      '先 conformer_generation（传猛犸 session_id，id 如 gefitinib_mol0 + SMILES），再 retrosynthesis（molecule_ids 一致）。',
-      '等工具完整返回后再总结；禁止 sessions_spawn，禁止未完成就结束。',
+      '本技能仅两步：conformer_generation → retrosynthesis；禁止靶点发现、分子对接、联网查 SMILES。',
+      'session_id 必须用当前猛犸 UUID（两步同一 UUID，禁止用 conformer 返回的时间戳 session）；用户已给 SMILES 时禁止 web_search/web_fetch/tavily，不要编造 SMILES。',
+      '吉非替尼 SMILES：CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl，id=gefitinib_mol0；禁止声称该 SMILES 与吉非替尼不符。',
+      'conformer 的 method/num_conformers 等放在 params 对象内；复杂参数用 mcporter --args-file 传 JSON；retrosynthesis 的 molecule_ids 与构象 id 一致。',
+      '若 retrosynthesis 返回 no synthesis routes found，如实报告未找到路线，禁止编造参考合成或文献工艺。',
+      '禁止 sessions_spawn；所有 mcporter --timeout 600000；等工具完整返回后再总结，禁止未完成就结束。',
     )
   }
   if (skill.name === '靶点发现') {

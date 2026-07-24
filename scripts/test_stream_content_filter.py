@@ -59,6 +59,13 @@ def main() -> None:
     assert "分析" not in joined5 or "完成" in joined5
     assert joined5.strip() == "完成", joined5
 
+    gate6 = ClientStreamFilter()
+    assert gate6.feed("发现 API 返回了自动生成的 session_id，但指令要求使用猛犸 UUID。需要用正确 session_id 重试。") == ""
+    assert gate6.feed(" 📋") == ""
+    out6 = gate6.feed("\n\n## 最终回答\n\n### 📋 吉非替尼 ADMET 报告\n\n| QED | 0.8 |")
+    assert "session_id" not in out6
+    assert "吉非替尼" in out6
+
     print("ok: client stream filter")
 
 

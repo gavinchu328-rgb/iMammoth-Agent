@@ -7,11 +7,14 @@ import re
 from typing import Any
 
 from content_filters import (
+    extract_embedded_skill_report,
     extract_trailing_model_final,
     has_rich_markdown_report,
     is_final_answer_unusable,
+    is_synthesized_step_dump_final,
     sanitize_final_answer_text,
     sanitize_process_step_text,
+    _final_answer_quality_score,
 )
 from tool_summarize import (
     _prefer_longer_text,
@@ -37,11 +40,6 @@ def extract_final_answer(reply: str) -> str:
             positions.append((pos, len(marker)))
             start = pos + len(marker)
 
-    if not positions:
-        if "## 分析过程" in raw or "##分析过程" in raw:
-            return extract_trailing_model_final(raw)
-        return sanitize_final_answer_text(raw)
-
     section_markers = ("## 最终回答", "##最终回答", "## 分析过程", "##分析过程")
 
     def slice_final_segment(start_pos: int, marker_len: int) -> str:
@@ -55,16 +53,25 @@ def extract_final_answer(reply: str) -> str:
             body = body[: min(cut_at)]
         return sanitize_final_answer_text(body)
 
-    candidates = [
-        seg
-        for pos, mlen in positions
-        if (seg := slice_final_segment(pos, mlen)) and not is_final_answer_unusable(seg)
-    ]
+    candidates: list[str] = []
+    for pos, mlen in positions:
+        seg = slice_final_segment(pos, mlen)
+        if seg and not is_final_answer_unusable(seg):
+            candidates.append(seg)
+    trailing = extract_trailing_model_final(raw)
+    if trailing and not is_final_answer_unusable(trailing):
+        candidates.append(trailing)
+    embedded = extract_embedded_skill_report(raw)
+    if embedded and not is_final_answer_unusable(embedded):
+        candidates.append(embedded)
     if candidates:
-        # 模型常在流末尾修订最终回答；取最后一个有效段，避免早期合成块与后续正文粘连。
-        return candidates[-1]
-    last_pos, last_len = positions[-1]
-    return slice_final_segment(last_pos, last_len)
+        return max(candidates, key=_final_answer_quality_score)
+    if positions:
+        last_pos, last_len = positions[-1]
+        last_seg = slice_final_segment(last_pos, last_len)
+        if last_seg and not is_final_answer_unusable(last_seg):
+            return last_seg
+    return extract_trailing_model_final(raw) or embedded or ""
 
 
 def resolve_final_answer(
@@ -74,14 +81,19 @@ def resolve_final_answer(
 ) -> str:
     """最终结果优先用模型流；仅当模型无有效正文时才用步骤合成兜底。"""
     final = sanitize_final_answer_text((model_final or "").strip())
-    if final and not is_final_answer_unusable(final):
+    if final and not is_final_answer_unusable(final) and not is_synthesized_step_dump_final(final):
         return final
 
     synthesized = ""
     if not skill_name or should_emit_early_final(steps, skill_name):
         synthesized = (synthesize_final_from_steps(steps, skill_name) or "").strip()
-    if synthesized:
+    if synthesized and not is_synthesized_step_dump_final(synthesized):
         return synthesized
+    embedded = extract_embedded_skill_report(final) or extract_embedded_skill_report(
+        "\n".join(str(s.get("detail") or "") for s in steps)
+    )
+    if embedded and not is_final_answer_unusable(embedded):
+        return embedded
     return final
 
 
@@ -202,17 +214,57 @@ def _format_step_status(step: dict[str, Any]) -> str:
     return "已执行"
 
 
+def _step_display_rank(step: dict[str, Any]) -> int:
+    st = str(step.get("status") or "").lower()
+    blob = f"{step.get('result') or ''} {step.get('detail') or ''}"
+    if st == "failed" or "失败" in blob:
+        return 3
+    if st == "done" and str(step.get("result") or "").strip():
+        return 2
+    if st == "running":
+        return 1
+    return 0
+
+
+def _steps_for_process_markdown(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Persisted process section: billable tools only, last meaningful attempt per tool name."""
+    filtered = [
+        s
+        for s in steps
+        if is_billable_action_step(s)
+        and str(s.get("kind") or "") != "thinking"
+        and str(s.get("name") or "") not in ("深度思考",)
+        and str(s.get("title") or "") not in ("深度思考",)
+    ]
+    by_name: dict[str, int] = {}
+    ordered: list[dict[str, Any]] = []
+    for step in filtered:
+        key = str(step.get("name") or step.get("title") or "").strip()
+        if not key:
+            ordered.append(step)
+            continue
+        if key in by_name:
+            idx = by_name[key]
+            if _step_display_rank(step) >= _step_display_rank(ordered[idx]):
+                ordered[idx] = step
+        else:
+            by_name[key] = len(ordered)
+            ordered.append(step)
+    return ordered
+
+
 def build_process_section_markdown(steps: list[dict[str, Any]]) -> str:
     """仅构建 ## 分析过程（过程过滤规则）。"""
-    if not steps:
+    display_steps = _steps_for_process_markdown(steps)
+    if not display_steps:
         return ""
-    tool_count = sum(1 for s in steps if is_billable_action_step(s))
+    tool_count = len(display_steps)
     lines = [
         "## 分析过程",
         f"- 工具数: {tool_count}",
         "",
     ]
-    for i, step in enumerate(steps, start=1):
+    for i, step in enumerate(display_steps, start=1):
         kind = step.get("kind")
         is_tool = is_billable_action_step(step)
         title = (step.get("title") or step.get("name") or ("工具" if is_tool else "深度思考")).strip()

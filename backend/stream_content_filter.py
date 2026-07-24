@@ -19,6 +19,18 @@ _PROCESS_MARKERS = (
 )
 _FINAL_MARKERS = ("## 最终回答", "##最终回答")
 
+_SESSION_RETRY_MONOLOGUE = re.compile(
+    r"发现\s*API\s*返回了自动生成的\s*session_id|"
+    r"需要用正确\s*session_id\s*重试|"
+    r"现在用正确的\s*session_id|"
+    r"第二个使用正确\s*session_id\s*的\s*conformer",
+    re.I,
+)
+
+_ORPHAN_EMOJI_ONLY = re.compile(
+    r"^\s*[\U0001F300-\U0001FAFF\U00002600-\U000027BF]+\s*$"
+)
+
 
 def _find_first_marker(buf: str, markers: tuple[str, ...]) -> int:
     idx = -1
@@ -86,6 +98,10 @@ def _safe_stream_preamble(text: str) -> bool:
     t = (text or "").lstrip()
     if not t:
         return False
+    if _ORPHAN_EMOJI_ONLY.match(t.strip()):
+        return False
+    if _SESSION_RETRY_MONOLOGUE.search(t):
+        return False
     if _is_process_header_prefix(t):
         return False
     if _looks_like_collapsed_process_dump(t):
@@ -106,6 +122,8 @@ class ClientStreamFilter:
         if not raw:
             return ""
         if "<tool_call" in raw.lower():
+            return ""
+        if _ORPHAN_EMOJI_ONLY.match(raw.strip()):
             return ""
         if _looks_like_json_fragment(raw):
             return ""

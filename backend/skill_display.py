@@ -108,6 +108,20 @@ def format_retrosynthesis(step: dict[str, Any]) -> str | None:
         return None
     detail = _body(step)
     result = strip_process_runtime_noise(str(step.get("result") or "").strip())
+    fail_blob = f"{result}\n{detail}".lower()
+    if any(
+        token in fail_blob
+        for token in (
+            "no synthesis routes",
+            "未能找到",
+            "逆合成分析失败",
+            "mcp 工具未能",
+        )
+    ):
+        return (
+            "**逆合成分析未找到合成路线**\n\n"
+            "- MCP retrosynthesis 工具未返回可用路线（内置反应库可能未覆盖该分子）。"
+        )
     if not detail and not result:
         return None
     title = result or str(step.get("title") or "逆合成分析结果").strip()

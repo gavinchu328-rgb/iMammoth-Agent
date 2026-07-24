@@ -69,6 +69,10 @@ assert(
   !isLivePanelTailFormatting('', tailSteps),
   'no tail formatting before stream final',
 )
+assert(
+  !isLivePanelTailFormatting(readyContent, []),
+  'no tail formatting when stream has final but no real tool steps',
+)
 
 const preambleOnly = '好的，我来帮您分析这个分子的对接结果。'
 assert(

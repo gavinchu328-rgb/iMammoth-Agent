@@ -52,4 +52,37 @@ assert sanitize_final_answer_text(mixed) == "简短结论"
 noisy = "命令仍在后台运行\n请等待工具返回完整结果"
 assert sanitize_process_step_text(noisy) == ""
 
+ligand_final = """✅ **吉非替尼配体准备完成！**
+
+| 步骤 | 状态 |
+| --- | --- |
+| 1. 构象生成 | ✅ |
+
+**完整结构化数据:**
+```json
+{"session_id": "abc", "molecule_id": "mol0"}
+```
+"""
+stripped = sanitize_final_answer_text(ligand_final)
+assert "完整结构化数据" not in stripped
+assert "```json" not in stripped
+assert "构象生成" in stripped
+
+emoji_appendix = """### 报告
+
+| 指标 | 值 |
+| --- | --- |
+| QED | 0.8 |
+
+### 📋 完整结构化数据
+```json
+{"session_id": "abc", "tool": "molecule_evaluation"}
+```
+"""
+stripped_emoji = sanitize_final_answer_text(emoji_appendix)
+assert "完整结构化数据" not in stripped_emoji
+assert "```json" not in stripped_emoji
+assert "QED" in stripped_emoji
+assert not stripped_emoji.rstrip().endswith("📋")
+
 print("ok: content filters decouple")

@@ -81,7 +81,7 @@ skills:
     category: "AI4Drug"
     icon: "🧭"
     description: "分析候选分子可能的合成路线"
-    example: "帮我分析一下吉非替尼大概可以怎么合成"
+    example: "帮我分析一下吉非替尼（SMILES: CN1CCN(CC1)COc2ccc3nc(ncc3c2)Cl）大概可以怎么合成"
 
   - id: ai4drug_full_pipeline
     name: "端到端药物发现"

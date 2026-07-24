@@ -54,10 +54,46 @@ def is_process_template_dump(text: str) -> bool:
     return False
 
 
+def extract_embedded_skill_report(raw: str) -> str:
+    """从误入过程步骤的正文中抽出技能报告块。"""
+    text = raw or ""
+    m = re.search(
+        r"(?:\*\*逆合成分析结果：[^*]+\*\*|\*\*逆合成分析未找到合成路线\*\*)"
+        r"[\s\S]*?(?=\n- 输入摘要:|\n- 结果摘要:|\n###\s*步骤|\n##\s*(?:最终回答|分析过程)|\Z)",
+        text,
+    )
+    if not m:
+        return ""
+    body = sanitize_final_answer_text(m.group(0).strip())
+    body = re.sub(r"^- 详情:\s*", "", body, flags=re.MULTILINE).strip()
+    return body
+
+
+def is_synthesized_step_dump_final(text: str) -> bool:
+    """步骤字段拼出来的伪最终回答（输入摘要/结果摘要/详情列表）。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.startswith("**逆合成分析结果") or t.startswith("**逆合成分析未找到"):
+        return False
+    field_hits = len(re.findall(r"^-\s*(?:输入摘要|结果摘要|详情):", t, re.MULTILINE))
+    if field_hits >= 2:
+        return True
+    if "逆合成路线已生成" in t and any(
+        token in t for token in ("未能找到", "no synthesis routes", "MCP 工具未能")
+    ):
+        return True
+    if t.startswith("**3D构象生成**") and "逆合成路线已生成" in t:
+        return True
+    return False
+
+
 def is_final_answer_unusable(text: str) -> bool:
     """最终回答是否应丢弃并改用步骤合成兜底（规则比过程更宽松）。"""
     t = (text or "").strip()
     if not t:
+        return True
+    if is_synthesized_step_dump_final(t):
         return True
     if has_rich_markdown_report(t):
         return False
@@ -75,6 +111,45 @@ def sanitize_process_step_text(text: str) -> str:
     return strip_process_runtime_noise(text or "")
 
 
+_EMOJI_BETWEEN = r"(?:[\U0001F300-\U0001FAFF\U00002600-\U000027BF]\s*)*"
+
+
+def _strip_orphan_emoji_lines(text: str) -> str:
+    lines = (text or "").split("\n")
+    kept = [
+        ln
+        for ln in lines
+        if not re.fullmatch(r"\s*[\U0001F300-\U0001FAFF\U00002600-\U000027BF]+\s*", ln)
+    ]
+    return "\n".join(kept)
+
+
+def _strip_structured_json_appendix(text: str) -> str:
+    """Remove model-appended tool JSON blocks from user-facing final answers."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(
+        rf"\n*(?:#{{1,3}}\s*)?{_EMOJI_BETWEEN}(?:\*{{1,2}})?完整结构化数据:?(?:\*{{1,2}})?\s*\n*```json\s*[\s\S]*?```",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    t = re.sub(
+        r"\n*```json\s*\{[\s\S]*?\"session_id\"[\s\S]*?```\s*$",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    t = re.sub(
+        rf"\n*#{{1,3}}\s*{_EMOJI_BETWEEN}完整结构化数据\s*$",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    return _strip_orphan_emoji_lines(t)
+
+
 def sanitize_final_answer_text(text: str) -> str:
     """最终回答：仅去掉误入的过程段/告警尾注，不套用过程噪声过滤。"""
     t = (text or "").strip()
@@ -90,7 +165,7 @@ def sanitize_final_answer_text(text: str) -> str:
     exec_fail = t.find("\n⚠️ 🛠️ Exec failed:")
     if exec_fail >= 0:
         t = t[:exec_fail].strip()
-    return t.strip()
+    return _strip_structured_json_appendix(t)
 
 
 # Back-compat alias used by tests / gradual migration
@@ -127,9 +202,13 @@ def _final_answer_quality_score(text: str) -> int:
     t = (text or "").strip()
     if not t:
         return 0
-    score = len(t)
+    score = min(len(t), 2000)
+    if is_synthesized_step_dump_final(t):
+        score -= 800
     if has_rich_markdown_report(t):
         score += 10_000
+    if "MCP 工具未能" in t or "未能找到合成路线" in t:
+        score += 500
     # 步骤合成兜底（**技能名** 开头短列表）权重低于模型报告
     if re.match(r"^\*\*[^*]+\*\*\s*\n\s*[-|]", t) and len(t) < 400:
         score -= 2_000

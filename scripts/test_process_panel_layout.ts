@@ -7,7 +7,9 @@ import {
   getLiveStepListClassName,
   getLiveStreamContentClassName,
   PROCESS_PANEL_LAYOUT,
+  resolveLiveSummaryDisplay,
 } from '../frontend/src/utils/processPanelLayout'
+import { looksLikeModelPipelineChecklist } from '../frontend/src/utils/streamingDisplay'
 
 let failed = 0
 function assert(cond: boolean, msg: string) {
@@ -32,16 +34,21 @@ assert(header.includes('思考 1'), header)
 
 const streamCls = getLiveStreamContentClassName()
 assert(streamCls.includes('assistant-prose'), streamCls)
-assert(!streamCls.includes('max-h-'), 'stream content should not be height-limited')
+assert(!streamCls.includes('max-h-'), 'stream content must stay outside the capped process box')
+assert(!streamCls.includes('overflow-y-auto'), streamCls)
 
-const compact = getLiveStepListClassName({ hasStreamAbove: true })
-const roomy = getLiveStepListClassName({ hasStreamAbove: false })
-assert(compact.includes(PROCESS_PANEL_LAYOUT.liveStepListCompact), compact)
-assert(roomy.includes(PROCESS_PANEL_LAYOUT.liveStepListDefault), roomy)
-assert(compact !== roomy, 'compact vs default differ')
+const liveSteps = getLiveStepListClassName()
+const liveStepsTail = getLiveStepListClassName({ isTailFormatting: true })
+assert(liveSteps.includes(PROCESS_PANEL_LAYOUT.liveStepListMax), liveSteps)
+assert(liveStepsTail.includes(PROCESS_PANEL_LAYOUT.liveStepListMax), liveStepsTail)
+assert(liveSteps === liveStepsTail, 'live step list height is unified across phases')
 
-const tail = getLiveStepListClassName({ hasStreamAbove: false, isTailFormatting: true })
-assert(tail.includes(PROCESS_PANEL_LAYOUT.liveStepListCompact), tail)
+const ligandStream = '✅ 第 2 步：配体准备完成。PDBQT 配体文件已生成。'
+const shown = resolveLiveSummaryDisplay(ligandStream, looksLikeModelPipelineChecklist)
+assert(shown === ligandStream, 'stream stays visible regardless of process steps')
+
+const pipeline = 'conformer_generation 等待执行\n步骤 1 完成'
+assert(resolveLiveSummaryDisplay(pipeline, looksLikeModelPipelineChecklist) === '', 'pipeline checklist hidden')
 
 if (failed > 0) {
   console.log(`failed: ${failed}`)

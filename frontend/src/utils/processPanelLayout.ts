@@ -7,10 +7,8 @@ export type ProcessPanelLayoutMode = 'live' | 'final'
 
 /** 全局尺寸 token（Tailwind class 片段） */
 export const PROCESS_PANEL_LAYOUT = {
-  /** Live：上方有流式正文，或收尾整理阶段 */
-  liveStepListCompact: 'max-h-[min(55vh,28rem)]',
-  /** Live：仅过程框、无流式正文（执行中主视图） */
-  liveStepListDefault: 'max-h-[min(65vh,36rem)]',
+  /** Live：过程步骤列表（全技能统一，多步技能内部滚动） */
+  liveStepListMax: 'max-h-[min(48vh,22rem)]',
   /** 最终消息中的过程步骤列表 */
   finalStepListMax: 'max-h-[min(48vh,18rem)]',
 } as const
@@ -72,25 +70,32 @@ export function getProcessPanelHeaderRowClassName(): string {
   return 'flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-800'
 }
 
-/** 执行中流式正文：不限高、不内滚，完整展示在过程框外。 */
+/** Live 流式正文：始终在过程框外完整展示，不因已有步骤而隐藏或限高。 */
+export function resolveLiveSummaryDisplay(
+  summaryAbove: string,
+  isPipelineChecklist: (text: string) => boolean,
+): string {
+  const text = summaryAbove.trim()
+  if (!text) return ''
+  if (isPipelineChecklist(text)) return ''
+  return text
+}
+
+/** 执行中流式正文：在过程框外展示，不限高、不内滚。 */
 export function getLiveStreamContentClassName(): string {
   return 'assistant-prose w-full text-[15px] leading-relaxed text-slate-800'
 }
 
 export interface LiveStepListLayoutOptions {
-  /** 上方是否正在展示流式正文 */
-  hasStreamAbove: boolean
+  /** @deprecated 保留兼容；Live 步骤列表现已全技能统一高度 */
+  hasStreamAbove?: boolean
   /** 流已结束、等待最终落盘 */
   isTailFormatting?: boolean
 }
 
-/** Live 过程步骤列表容器 class */
-export function getLiveStepListClassName(options: LiveStepListLayoutOptions): string {
-  const compact = options.hasStreamAbove || Boolean(options.isTailFormatting)
-  const max = compact
-    ? PROCESS_PANEL_LAYOUT.liveStepListCompact
-    : PROCESS_PANEL_LAYOUT.liveStepListDefault
-  return `${max} ${STEP_LIST_BASE}`
+/** Live 过程步骤列表容器 class（全技能统一高度，避免多步流程撑满屏） */
+export function getLiveStepListClassName(_options?: LiveStepListLayoutOptions): string {
+  return `${PROCESS_PANEL_LAYOUT.liveStepListMax} ${STEP_LIST_BASE}`
 }
 
 /** 最终消息 ProcessPanel 步骤列表容器 class */

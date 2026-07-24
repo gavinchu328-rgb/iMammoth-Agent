@@ -1,3 +1,4 @@
+import type { LiveProcessStep } from '../api/client'
 import {
   isAuxiliaryToolStep,
   isJsonLikeToolOutput,
@@ -375,6 +376,34 @@ export function parseProcessLog(content: string): ParsedAssistantReply {
     finalAnswer,
     raw,
   }
+}
+
+function mapParsedStatus(status: string): LiveProcessStep['status'] {
+  const s = (status || '').trim()
+  if (s.includes('进行') || s.includes('等待')) return 'running'
+  if (s.includes('失败')) return 'failed'
+  return 'done'
+}
+
+function mapParsedKind(type: ProcessStep['type']): LiveProcessStep['kind'] {
+  if (type === '思考') return 'thinking'
+  if (type === '技能') return 'skill'
+  return 'tool'
+}
+
+/** SSE 尚无 step 事件时，从流式 ## 分析过程 文本回填 Live 步骤（对接盒等技能防空白）。 */
+export function parseStreamProcessLiveSteps(content: string): LiveProcessStep[] {
+  const parsed = parseProcessLog((content || '').trim())
+  if (!parsed.hasProcess || parsed.steps.length === 0) return []
+  return parsed.steps.map((step) => ({
+    kind: mapParsedKind(step.type),
+    title: step.title || step.name || '步骤',
+    status: mapParsedStatus(step.status),
+    name: step.name || step.title || '',
+    input: step.inputSummary || '',
+    result: step.resultSummary || '',
+    detail: step.detail || '',
+  }))
 }
 
 function isFailedStepResult(resultSummary: string, detail: string): boolean {

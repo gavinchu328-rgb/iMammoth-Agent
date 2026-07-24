@@ -515,6 +515,21 @@ def _parse_mcporter_ai4drug(cmd: str) -> tuple[str, str, str] | None:
             parts.append(strip_paths(val)[:80])
     if re.search(r"\bmolecules\s*=", cmd):
         parts.append("分子构象")
+    session_m = re.search(
+        r"""session_id\s*=\s*(?:'([^']*)'|"([^"]*)"|(\S+))""",
+        cmd,
+    )
+    if session_m:
+        sid = next((g for g in session_m.groups() if g is not None), "").strip()
+        if sid:
+            parts.append(f"session_id={sid[:36]}")
+    elif short in (
+        "conformer_generation",
+        "molecule_evaluation",
+        "retrosynthesis",
+        "ligand_preparation",
+    ):
+        parts.append("⚠️ 未传 session_id")
     inp = " · ".join(parts) if parts else "执行中"
     return (label, label, inp)
 
@@ -1317,6 +1332,11 @@ def _summarize_ai4drug_structured(tool_name: str, raw: str) -> dict[str, str] | 
                 bits.append(smiles)
             if bits:
                 lines.append(" · ".join(bits))
+        resp_sid = str(inner.get("session_id") or data.get("session_id") or "").strip()
+        if resp_sid and re.fullmatch(r"\d{14}_\d+", resp_sid):
+            lines.append(
+                "提示：响应 session_id 为内部时间戳；后续工具请使用猛犸 UUID，勿因此重试构象生成"
+            )
         count = len(molecules)
         summary = f"已生成 {count} 个分子构象" if count else "3D构象生成完成"
         return {"result": summary, "detail": _clip_detail_display("\n".join(lines) if lines else summary)}
@@ -2040,22 +2060,37 @@ def _backfill_molecular_docking_from_reply(reply: str) -> dict[str, str] | None:
 def _backfill_retrosynthesis_from_reply(reply: str) -> dict[str, str] | None:
     if "逆合成" not in reply and "retrosynt" not in reply.lower():
         return None
-    steps_n = re.search(r"(\d+)\s*步", reply)
+    low = reply.lower()
+    if any(
+        token in low
+        for token in (
+            "no synthesis routes",
+            "no routes found",
+            "逆合成分析失败",
+            "未能找到合成路线",
+            "mcp 工具未能",
+        )
+    ):
+        return None
+    if not re.search(r"路线\s*\d+", reply) and '"routes"' not in reply:
+        return None
     routes_n = re.search(r"(\d+)\s*条.{0,6}路线", reply)
     summary = "逆合成路线已生成"
     if routes_n:
         summary = f"已生成 {routes_n.group(1)} 条逆合成路线"
-    elif steps_n:
-        summary += f"（{steps_n.group(1)} 步）"
     detail_lines = []
     for line in reply.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if any(token in line for token in ("路线", "步骤", "Suzuki", "中间体", "商用", "in_stock")):
+        if any(token in line for token in ("路线", "Suzuki", "中间体", "商用", "in_stock")):
+            if "参考合成" in line or "概览" in line:
+                continue
             detail_lines.append(line)
     detail = "\n".join(detail_lines[:12])
-    return {"result": summary, "detail": _clip_detail_display(detail) if detail else ""}
+    if not detail:
+        return None
+    return {"result": summary, "detail": _clip_detail_display(detail)}
 
 
 def _backfill_from_reply(name: str, reply: str) -> dict[str, str] | None:
@@ -2330,6 +2365,8 @@ _PROCESS_POLL_RECORD_ID = "__process_poll__"
 
 
 def _is_process_poll_step(step: dict[str, Any]) -> bool:
+    if str(step.get("kind") or "") == "thinking":
+        return False
     name = str(step.get("name") or "")
     title = str(step.get("title") or "")
     inp = str(step.get("input") or "").lower()
@@ -2745,6 +2782,8 @@ def prune_live_display_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]
     out = collapse_process_poll_steps(out)
     out = _drop_debug_thinking_when_primary_done(out)
     out = _drop_auxiliary_tools_when_primary_done(out)
+    if any(is_billable_action_step(s) for s in out):
+        out = [s for s in out if str(s.get("kind") or "") != "thinking"]
     return out
 
 
